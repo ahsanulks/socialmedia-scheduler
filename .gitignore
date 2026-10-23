@@ -1,0 +1,26 @@
+# build output
+/bin/
+/social-scheduler
+*.exe
+
+# local data
+/data/
+*.db
+*.db-wal
+*.db-shm
+/backups/
+
+# secrets & local config
+.env
+.env.*
+
+# tooling
+coverage.out
+coverage.html
+.DS_Store
+data/
+bin/
+.env
+*.db
+*.db-wal
+*.db-shm

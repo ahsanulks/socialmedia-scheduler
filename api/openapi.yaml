@@ -1,0 +1,432 @@
+openapi: 3.1.0
+info:
+  title: Social Scheduler API
+  version: 0.1.0
+  description: |
+    Backend-only scheduler for social posts. MVP scope: text-only Threads posts.
+    Commands return identity and version only; read the schedule for details (CQRS).
+servers:
+  - url: http://localhost:8080
+tags:
+  - name: Schedules
+  - name: Health
+security:
+  - bearerAuth: []
+
+paths:
+  /healthz:
+    get:
+      tags: [Health]
+      summary: Liveness probe
+      security: []
+      operationId: healthz
+      responses:
+        "200":
+          description: Process is alive
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    const: ok
+
+  /readyz:
+    get:
+      tags: [Health]
+      summary: Readiness probe (checks database)
+      security: []
+      operationId: readyz
+      responses:
+        "200":
+          description: Ready to serve traffic
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    const: ok
+                  database:
+                    type: string
+                    const: up
+        "503":
+          description: Dependency unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
+  /api/v1/platforms:
+    get:
+      summary: List registered platform adapters and what each accepts
+      operationId: listPlatforms
+      security: [{bearerAuth: []}]
+      responses:
+        '200':
+          description: Registered platforms and their capabilities
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [platforms]
+                properties:
+                  platforms:
+                    type: array
+                    items:
+                      type: object
+                      required: [name, max_text_length, requires_media, supports_text, prepares_draft, daily_limit]
+                      properties:
+                        name: {type: string, example: threads}
+                        max_text_length: {type: integer, example: 500}
+                        requires_media: {type: boolean, example: false}
+                        supports_text: {type: boolean, example: true}
+                        prepares_draft: {type: boolean, example: true}
+                        daily_limit: {type: integer, example: 240}
+
+  /api/v1/schedules:
+    post:
+      tags: [Schedules]
+      summary: Schedule a new post
+      operationId: createSchedule
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateScheduleRequest"
+      responses:
+        "201":
+          description: Schedule created
+          headers:
+            Location:
+              description: URL of the created schedule
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CommandResult"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+    get:
+      tags: [Schedules]
+      summary: List the schedule plan
+      operationId: listSchedules
+      parameters:
+        - name: status
+          in: query
+          description: Comma-separated list of statuses. Defaults to all except canceled.
+          schema:
+            type: string
+            example: scheduled,failed
+        - name: platform
+          in: query
+          description: Exact platform match, e.g. "threads".
+          schema:
+            type: string
+            example: threads
+        - name: from
+          in: query
+          description: Lower bound on scheduled_at (inclusive), RFC 3339 UTC.
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          description: Upper bound on scheduled_at (exclusive), RFC 3339 UTC.
+          schema:
+            type: string
+            format: date-time
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: cursor
+          in: query
+          description: Opaque keyset cursor from a previous response.
+          schema:
+            type: string
+        - name: order
+          in: query
+          description: Sort by scheduled_at.
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: asc
+      responses:
+        "200":
+          description: Page of schedules
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScheduleList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/schedules/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      tags: [Schedules]
+      summary: Read one schedule
+      operationId: getSchedule
+      responses:
+        "200":
+          description: The schedule
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Schedule"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [Schedules]
+      summary: Edit content and/or publish time
+      operationId: updateSchedule
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateScheduleRequest"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CommandResult"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+    delete:
+      tags: [Schedules]
+      summary: Cancel a schedule (soft delete)
+      operationId: cancelSchedule
+      parameters:
+        - name: expected_version
+          in: query
+          description: Optional optimistic-concurrency guard.
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "204":
+          description: Canceled (idempotent — repeated calls also return 204)
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Static API token from the API_TOKEN environment variable.
+
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: Replaying the same key with the same body returns the original response.
+      schema:
+        type: string
+        maxLength: 128
+
+  responses:
+    BadRequest:
+      description: Malformed request
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Unauthorized:
+      description: Missing or invalid bearer token
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    NotFound:
+      description: Unknown schedule
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Conflict:
+      description: Version conflict or invalid state transition
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    ValidationFailed:
+      description: Validation failed
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+
+  schemas:
+    CreateScheduleRequest:
+      type: object
+      required: [content, scheduled_at]
+      properties:
+        content:
+          type: string
+          minLength: 1
+          maxLength: 5000
+          description: Must also fit the target platform's MaxTextLength (e.g. 500 for threads).
+        scheduled_at:
+          type: string
+          format: date-time
+          description: RFC 3339 UTC timestamp ending in Z (e.g. 2026-10-22T02:00:00Z); must be in the future.
+        platform:
+          type: string
+          description: Target platform adapter. Defaults to "threads"; must be registered.
+          example: threads
+
+    UpdateScheduleRequest:
+      type: object
+      required: [expected_version]
+      properties:
+        content:
+          type: string
+          minLength: 1
+          maxLength: 5000
+          description: Must also fit the target platform's MaxTextLength.
+        scheduled_at:
+          type: string
+          format: date-time
+        expected_version:
+          type: integer
+          minimum: 1
+      description: At least one of content or scheduled_at must be present.
+
+    CommandResult:
+      type: object
+      required: [id, version]
+      properties:
+        id:
+          type: string
+          format: uuid
+        version:
+          type: integer
+          minimum: 1
+          description: New version after the change; use it as expected_version next time.
+
+    Schedule:
+      type: object
+      required: [id, content, scheduled_at, platform, status, version, attempts, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        content:
+          type: string
+        status:
+          type: string
+          enum: [scheduled, publishing, published, failed, canceled]
+        scheduled_at:
+          type: string
+          format: date-time
+        platform:
+          type: string
+        attempts:
+          type: integer
+          minimum: 0
+        last_error:
+          type: [string, "null"]
+        external_post_id:
+          type: [string, "null"]
+        version:
+          type: integer
+          minimum: 1
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        published_at:
+          type: [string, "null"]
+          format: date-time
+
+    ScheduleList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Schedule"
+        next_cursor:
+          type: [string, "null"]
+          description: Pass as the cursor query parameter for the next page.
+
+    Problem:
+      type: object
+      required: [type, title, status, code]
+      properties:
+        type:
+          type: string
+          example: https://docs.example.com/errors/validation_failed
+        title:
+          type: string
+          example: Validation failed
+        status:
+          type: integer
+          example: 422
+        detail:
+          type: string
+          example: scheduled_at must be in the future
+        code:
+          type: string
+          enum:
+            - bad_request
+            - unauthorized
+            - not_found
+            - version_conflict
+            - invalid_state
+            - validation_failed
+            - unsupported_platform
+            - platform_limit_exceeded
+            - internal_error
+        request_id:
+          type: string
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              field:
+                type: string
+              message:
+                type: string
