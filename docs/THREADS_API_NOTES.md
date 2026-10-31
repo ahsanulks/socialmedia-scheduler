@@ -5,17 +5,26 @@ implementation of the generic `app.Publisher` port described in `docs/SPEC.md` �
 create container, `Publish` = publish container. Nothing here is visible to the domain, the worker,
 or the HTTP API.
 
-Source: Meta for Developers — Threads API.
-Verify against the live docs before implementing M5; Meta changes quotas and error codes.
+Source: Meta for Developers — Threads API (the docs moved from
+`developers.facebook.com/docs/threads/*` to
+`developers.facebook.com/documentation/threads/*`; every topic also serves raw
+markdown at `<topic>.md/`). Re-verify against the live docs before relying on
+numbers here; Meta changes quotas and counting rules. Verified against the live
+site on 2026-10-31.
 
 - Publishing reference: https://developers.facebook.com/documentation/threads/reference/publishing/
-- Posts guide: https://developers.facebook.com/documentation/threads/posts/
+- Posts guide: https://developers.facebook.com/documentation/threads/posts
+- Overview (rate limits): https://developers.facebook.com/documentation/threads/overview
+- Troubleshooting (container status): https://developers.facebook.com/documentation/threads/troubleshooting
 
 ## Base
 
 ```
 https://graph.threads.net/v1.0
 ```
+
+Both `graph.threads.net` and `graph.threads.com` are officially valid hosts;
+newer doc examples use `.com`, either works.
 
 Auth: a Threads user access token (long-lived, ~60 days) passed as `access_token`.
 Required scopes for text posting: `threads_basic`, `threads_content_publish`.
@@ -43,28 +52,48 @@ curl -sS -X POST "https://graph.threads.net/v1.0/$THREADS_USER_ID/threads_publis
 # -> {"id": "18000000000000001"}
 ```
 
-For media posts, poll the container status before publishing:
+Container status endpoint (media posts, or whenever publish errors):
 
 ```bash
 curl -sS "https://graph.threads.net/v1.0/$CREATION_ID?fields=status,error_message&access_token=$THREADS_ACCESS_TOKEN"
+# status: IN_PROGRESS | FINISHED | PUBLISHED | EXPIRED | ERROR
 ```
 
-Text-only containers are normally publishable immediately; tolerate a "container not ready" style
-error by treating it as retryable.
+`EXPIRED` confirms an unpublished container is discarded after 24h, so our short
+create→persist→publish window is safe. Meta recommends polling at most once per
+minute, for no more than 5 minutes.
 
 ## Limits
 
 | Limit | Value |
 |---|---|
-| Text post length | 500 characters |
-| API-published posts | 250 per rolling 24h per profile |
+| Text post length | 500 characters, **counted in UTF-8 bytes** — emoji count as their byte length (verified sentence: "For the post character limit, emojis are counted as the number of UTF-8 bytes") |
+| API-published posts | 250 per rolling 24h per profile (enforced server-side on `threads_publish`; the docs tell scheduling apps to enforce it client-side too) |
 | Replies | 1,000 per 24h |
 | Deletions | 100 per 24h |
-| Carousel items | 20 (not used in MVP) |
+| Carousel items | 20, minimum 2 (not used in MVP) |
 | Video length | 5 minutes (not used in MVP) |
-| General call budget | a function of impressions; not a constraint at our volume |
+| General call budget | `4800 × impressions` per 24h; not a constraint at our volume |
 
-Safety cap in the scheduler: `THREADS_DAILY_POST_LIMIT=240`.
+Consequences for the adapter:
+
+- The Threads edge validation counts UTF-8 bytes (`Capabilities.TextLengthInBytes`),
+  not runes — a rune-based check would accept posts Meta rejects with 400.
+- Live quota is also queryable:
+  `GET /{user-id}/threads_publishing_limit?fields=quota_usage,config` →
+  `quota_usage`, `config.quota_total` (250), `config.quota_duration` (86400).
+  The scheduler currently counts its own published rows (`THREADS_DAILY_LIMIT=240`,
+  safety margin under 250), which satisfies Meta's client-side guidance.
+
+Also on the container-create endpoint (text posts, optional, not used in MVP):
+
+- `auto_publish_text=true` publishes a text post in one call — no `threads_publish`
+  step, and it eliminates the create→publish duplicate-post window for text posts.
+- Meta recommends waiting ~30 seconds between container creation and
+  `threads_publish` in general; for text-only containers our immediate publish has
+  worked against the stub, but tolerate "container not ready" as retryable.
+
+Safety cap in the scheduler: `THREADS_DAILY_LIMIT=240`.
 
 Token refresh (run manually / future job):
 
@@ -110,6 +139,13 @@ Log `fbtrace_id` on every failure — it is what Meta support asks for.
 
 ## Open questions
 
-- Does Meta count links or emoji as one character, or per code point? Validate with a test post
-  containing a URL and a ZWJ emoji before advertising an exact 500-char guarantee.
-- Does an unpublished container expire? If so, the create→persist→publish window must stay short.
+Closed by the current docs: an unpublished container expires after 24 hours
+(`EXPIRED` status), and the 500-character limit is counted in UTF-8 bytes.
+
+Remaining:
+
+- Links and normal multi-byte text: confirm a real post containing a URL and a
+  mixed-script body is accepted, before advertising an exact 500-byte guarantee.
+- Whether Meta recommends the ~30s wait for text containers too, or only media.
+  Our immediate publish is standard for text; revisit only if live testing shows
+  "container not ready" failures.

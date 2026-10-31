@@ -64,6 +64,11 @@ func NewPostContent(raw string) (PostContent, error) {
 func (c PostContent) String() string { return c.v }
 func (c PostContent) RuneCount() int { return utf8.RuneCountInString(c.v) }
 
+// ByteCount is the UTF-8 byte length. Some platforms (Threads) count the
+// limit in bytes with multi-byte characters like emoji, so the edge validates
+// against whichever unit the adapter declares.
+func (c PostContent) ByteCount() int { return len(c.v) }
+
 // ScheduleTime is an instant truncated to milliseconds, always UTC.
 type ScheduleTime struct{ t time.Time }
 

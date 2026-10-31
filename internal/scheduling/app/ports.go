@@ -32,11 +32,17 @@ type Publication struct {
 
 // Capabilities is each adapter's declaration of its own format's rules.
 type Capabilities struct {
-	MaxTextLength int  // 0 = unknown
+	MaxTextLength int  // 0 = unknown; unit given by TextLengthInBytes
 	RequiresMedia bool // platform cannot post text alone
 	SupportsText  bool
 	PreparesDraft bool // Prepare creates a platform-side draft
 	DailyLimit    int  // posts per rolling 24h; 0 = unknown
+
+	// TextLengthInBytes means MaxTextLength counts UTF-8 bytes, not
+	// characters. Threads works this way: a 500-character post counts emoji
+	// as their byte length, so a rune-based check would accept posts the
+	// platform rejects with 400.
+	TextLengthInBytes bool
 }
 
 // Publisher is the platform seam. Implementations live in

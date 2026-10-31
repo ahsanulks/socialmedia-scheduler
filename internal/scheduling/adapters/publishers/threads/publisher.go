@@ -67,6 +67,10 @@ func (p *Publisher) Capabilities() app.Capabilities {
 		SupportsText:  true,
 		PreparesDraft: true,
 		DailyLimit:    p.cfg.DailyLimit,
+		// Meta: text posts are limited to 500 characters, and emojis are
+		// counted as the number of UTF-8 bytes. A rune-based check would
+		// accept posts the API rejects with 400.
+		TextLengthInBytes: true,
 	}
 }
 

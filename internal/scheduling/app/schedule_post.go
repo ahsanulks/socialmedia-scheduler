@@ -60,11 +60,15 @@ func (h *SchedulePostHandler) Handle(ctx context.Context, cmd SchedulePost) (Res
 // checkCapabilities rejects what the target platform cannot express, before the
 // schedule is stored. Anything not checkable here surfaces in Prepare.
 func checkCapabilities(platform domain.Platform, caps Capabilities, content domain.PostContent) error {
-	if caps.MaxTextLength > 0 && content.RuneCount() > caps.MaxTextLength {
+	got, unit := content.RuneCount(), "characters"
+	if caps.TextLengthInBytes {
+		got, unit = content.ByteCount(), "bytes"
+	}
+	if caps.MaxTextLength > 0 && got > caps.MaxTextLength {
 		return PlatformLimitError{
 			Platform: platform.String(),
 			Field:    "content",
-			Message:  fmt.Sprintf("platform %q allows at most %d characters, got %d", platform.String(), caps.MaxTextLength, content.RuneCount()),
+			Message:  fmt.Sprintf("platform %q allows at most %d %s, got %d", platform.String(), caps.MaxTextLength, unit, got),
 		}
 	}
 	if caps.RequiresMedia && !caps.SupportsText {

@@ -78,10 +78,11 @@ paths:
                     type: array
                     items:
                       type: object
-                      required: [name, max_text_length, requires_media, supports_text, prepares_draft, daily_limit]
+                      required: [name, max_text_length, max_text_length_unit, requires_media, supports_text, prepares_draft, daily_limit]
                       properties:
                         name: {type: string, example: threads}
                         max_text_length: {type: integer, example: 500}
+                        max_text_length_unit: {type: string, enum: [characters, bytes], example: bytes}
                         requires_media: {type: boolean, example: false}
                         supports_text: {type: boolean, example: true}
                         prepares_draft: {type: boolean, example: true}

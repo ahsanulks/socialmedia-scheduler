@@ -136,23 +136,29 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handlePlatforms(w http.ResponseWriter, r *http.Request) {
 	type info struct {
-		Name          string `json:"name"`
-		MaxTextLength int    `json:"max_text_length"`
-		RequiresMedia bool   `json:"requires_media"`
-		SupportsText  bool   `json:"supports_text"`
-		PreparesDraft bool   `json:"prepares_draft"`
-		DailyLimit    int    `json:"daily_limit"`
+		Name           string `json:"name"`
+		MaxTextLength  int    `json:"max_text_length"`
+		TextLengthUnit string `json:"max_text_length_unit"`
+		RequiresMedia  bool   `json:"requires_media"`
+		SupportsText   bool   `json:"supports_text"`
+		PreparesDraft  bool   `json:"prepares_draft"`
+		DailyLimit     int    `json:"daily_limit"`
 	}
 	out := make([]info, 0)
 	for _, p := range s.deps.Registry.Platforms() {
 		caps, _ := s.deps.Registry.Capabilities(p)
+		unit := "characters"
+		if caps.TextLengthInBytes {
+			unit = "bytes"
+		}
 		out = append(out, info{
-			Name:          p.String(),
-			MaxTextLength: caps.MaxTextLength,
-			RequiresMedia: caps.RequiresMedia,
-			SupportsText:  caps.SupportsText,
-			PreparesDraft: caps.PreparesDraft,
-			DailyLimit:    caps.DailyLimit,
+			Name:           p.String(),
+			MaxTextLength:  caps.MaxTextLength,
+			TextLengthUnit: unit,
+			RequiresMedia:  caps.RequiresMedia,
+			SupportsText:   caps.SupportsText,
+			PreparesDraft:  caps.PreparesDraft,
+			DailyLimit:     caps.DailyLimit,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"platforms": out})

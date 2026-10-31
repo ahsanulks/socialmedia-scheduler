@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -92,6 +93,43 @@ func TestCreateValidation(t *testing.T) {
 			t.Fatalf("status: want 400, got %d: %s", resp.StatusCode, raw)
 		}
 	})
+}
+
+// TestCreateValidation_CountsTextInBytes pins the Threads counting rule:
+// Meta counts the 500-character limit in UTF-8 bytes (emoji are multi-byte),
+// so a 300-emoji post (300 runes, 1200 bytes) must be rejected even though a
+// rune count would let it through.
+func TestCreateValidation_CountsTextInBytes(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("no Graph call expected during validation")
+	}))
+	defer srv.Close()
+	e := newEnv(t, []app.Publisher{newThreadsPublisher(t, srv.URL+"/v1.0")}, withoutWorker())
+
+	cases := []struct {
+		name     string
+		content  string
+		wantStat int
+	}{
+		{"125 emojis fit exactly in 500 bytes", strings.Repeat("\U0001F97B", 125), 201},
+		{"126 emojis exceed 500 bytes", strings.Repeat("\U0001F97B", 126), 422},
+		{"300 emojis pass a rune check but exceed bytes", strings.Repeat("\U0001F97B", 300), 422},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			body := map[string]any{"content": tc.content, "scheduled_at": atIn(time.Hour)}
+			resp, raw := e.request(http.MethodPost, "/api/v1/schedules", body, e.token)
+			if resp.StatusCode != tc.wantStat {
+				t.Fatalf("status: want %d, got %d: %s", tc.wantStat, resp.StatusCode, raw)
+			}
+			if tc.wantStat == 201 {
+				return
+			}
+			if got := decode(t, raw)["code"]; got != "platform_limit_exceeded" {
+				t.Fatalf("code: want platform_limit_exceeded, got %v", got)
+			}
+		})
+	}
 }
 
 func TestAuthAndHealth(t *testing.T) {
