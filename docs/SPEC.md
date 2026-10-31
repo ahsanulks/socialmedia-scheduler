@@ -318,9 +318,13 @@ platform — only the adapter differs.
 
 1. **Recover leases.** Any `publishing` row with `lease_until <= now` goes back to `scheduled` with
    a retry reason "lease expired"; attempts are unchanged.
-2. **Claim.** In one `BEGIN IMMEDIATE` transaction, select up to `SCHEDULER_BATCH` rows where
-   `status='scheduled'`, `scheduled_at <= now`, and `next_attempt_at` is null or ≤ now; set
-   `status='publishing'`, `lease_until = now + 2m`, `version = version + 1`; return them.
+2. **Claim.** Select up to `SCHEDULER_BATCH` rows where `status='scheduled'`, `scheduled_at <= now`,
+   and `next_attempt_at` is null or ≤ now, ordered by `scheduled_at`. For each row: load the
+   aggregate, call `StartPublishing` (sets `status='publishing'`, takes the lease, bumps the
+   version), and save it. The save is guarded by the version the aggregate was loaded with, so when
+   two workers race, one wins and the loser gets a version conflict and skips the post. Claiming
+   through the domain keeps every row loadable: a SQL-only claim writes a `scheduled` row carrying a
+   lease, which `Rehydrate` refuses by design.
 3. **Rate budget per platform.** Count posts published for that platform in the last 24h. If the
    adapter's `Capabilities().DailyLimit` is exceeded, skip that platform's posts this tick.
 4. **Resolve the adapter.** Look up the platform in the registry. If it is not registered (e.g. it
@@ -388,6 +392,8 @@ type Capabilities struct {
 	SupportsText  bool
 	PreparesDraft bool // true when Prepare creates a platform-side draft
 	DailyLimit    int  // posts allowed per rolling 24h; 0 = unknown
+
+	TextLengthInBytes bool // threads counts the 500 limit in UTF-8 bytes (emoji are multi-byte)
 }
 ```
 
@@ -433,8 +439,9 @@ POST https://graph.threads.net/v1.0/{user-id}/threads_publish
      → {"id": "<post-id>"}               ← Publish
 ```
 
-- Text limit 500 characters; account limit 250 posts per rolling 24h (`Capabilities().DailyLimit`
-  = 240 as a safety margin).
+- Text limit 500 characters, counted in UTF-8 bytes — emoji count as their byte length
+  (`Capabilities().TextLengthInBytes = true`); account limit 250 posts per rolling 24h
+  (`Capabilities().DailyLimit` = 240 as a safety margin).
 - Base URL default `https://graph.threads.net/v1.0`.
 - Retryable: network errors, HTTP 429, HTTP 5xx, "container not ready".
 - Permanent: HTTP 400/403, invalid parameters, HTTP 401 / code 190 (token).
@@ -611,6 +618,9 @@ Built and covered by the end-to-end suite (`e2e/`, `go test -race ./...`):
 
 - Domain, CQRS write/read split, SQLite adapters, migrations, HTTP API, worker, fake and Threads
   adapters, platform registry, rate budget, retries, lease recovery, `GET /platforms`.
+- Platform edge validation follows each adapter's declared counting unit.
+  Threads counts its 500-character limit in UTF-8 bytes (emoji are multi-byte), verified
+  against the live docs and pinned by `TestCreateValidation_CountsTextInBytes`.
 - The Threads adapter is exercised against a stubbed Graph API (two-call sequence, reference
   reuse on retry, 429 → retryable, 400 → permanent). It has not been pointed at the live API yet —
   that needs `THREADS_USER_ID` and `THREADS_ACCESS_TOKEN`, and it will create a real post.
