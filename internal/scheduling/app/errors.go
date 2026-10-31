@@ -24,3 +24,24 @@ func (e PlatformLimitError) Error() string {
 	}
 	return e.Field + ": " + e.Message
 }
+
+// MediaRequiredError reports a post without media for a platform that cannot
+// post text alone (e.g. Instagram).
+type MediaRequiredError struct {
+	Platform string
+}
+
+func (e MediaRequiredError) Error() string {
+	return fmt.Sprintf("platform %q requires media", e.Platform)
+}
+
+// UnsupportedMediaError reports a media kind the platform's adapter does not
+// accept, including any media sent to a text-only platform.
+type UnsupportedMediaError struct {
+	Platform string
+	Kind     string
+}
+
+func (e UnsupportedMediaError) Error() string {
+	return fmt.Sprintf("platform %q does not accept %q media", e.Platform, e.Kind)
+}

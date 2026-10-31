@@ -8,6 +8,8 @@ import "time"
 type Snapshot struct {
 	ID             string
 	Content        string
+	MediaURL       *string
+	MediaKind      *string
 	ScheduledAt    time.Time
 	Platform       string
 	Status         string
@@ -37,6 +39,12 @@ func (p *ScheduledPost) Snapshot() Snapshot {
 		Attempts:    p.attempts.Int(),
 		CreatedAt:   p.createdAt,
 		UpdatedAt:   p.updatedAt,
+	}
+	if p.media != nil {
+		url := p.media.URL()
+		kind := p.media.Kind()
+		s.MediaURL = &url
+		s.MediaKind = &kind
 	}
 	if p.prepareRef != nil {
 		ref := p.prepareRef.String()
@@ -99,6 +107,18 @@ func Rehydrate(s Snapshot) (*ScheduledPost, error) {
 		return nil, err
 	}
 
+	var media *Media
+	if s.MediaURL != nil || s.MediaKind != nil {
+		if s.MediaURL == nil || s.MediaKind == nil {
+			return nil, ValidationError{Field: "media", Message: "url and kind must be set together"}
+		}
+		m, err := NewMedia(*s.MediaURL, *s.MediaKind)
+		if err != nil {
+			return nil, err
+		}
+		media = &m
+	}
+
 	var state State
 	switch status {
 	case StatusScheduled():
@@ -153,6 +173,7 @@ func Rehydrate(s Snapshot) (*ScheduledPost, error) {
 	post := &ScheduledPost{
 		id:          id,
 		content:     content,
+		media:       media,
 		scheduledAt: NewScheduleTime(s.ScheduledAt),
 		platform:    platform,
 		attempts:    attempts,

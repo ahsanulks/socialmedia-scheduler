@@ -56,7 +56,7 @@ func (h *UpdateScheduleHandler) Handle(ctx context.Context, cmd UpdateSchedule) 
 			return Result{}, err
 		}
 		if caps, ok := h.registry.Capabilities(post.Platform()); ok {
-			if err := checkCapabilities(post.Platform(), caps, content); err != nil {
+			if err := checkCapabilities(post.Platform(), caps, content, post.Media()); err != nil {
 				return Result{}, err
 			}
 		}

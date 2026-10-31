@@ -12,6 +12,7 @@ const DefaultLease = 2 * time.Minute
 type ScheduledPost struct {
 	id          PostID
 	content     PostContent
+	media       *Media
 	scheduledAt ScheduleTime
 	platform    Platform
 	prepareRef  *PrepareRef
@@ -25,8 +26,8 @@ type ScheduledPost struct {
 }
 
 // NewScheduledPost creates a scheduled post. Creation rules only: the publish
-// time must be in the future.
-func NewScheduledPost(id PostID, content PostContent, at ScheduleTime, platform Platform, now time.Time) (*ScheduledPost, error) {
+// time must be in the future. media is nil for text-only platforms.
+func NewScheduledPost(id PostID, content PostContent, media *Media, at ScheduleTime, platform Platform, now time.Time) (*ScheduledPost, error) {
 	now = now.UTC().Truncate(time.Millisecond)
 	if !at.IsAfter(now) {
 		return nil, invalid("scheduled_at", "must be in the future")
@@ -34,6 +35,7 @@ func NewScheduledPost(id PostID, content PostContent, at ScheduleTime, platform 
 	p := &ScheduledPost{
 		id:          id,
 		content:     content,
+		media:       media,
 		scheduledAt: at,
 		platform:    platform,
 		attempts:    NoAttempts(),
@@ -43,13 +45,20 @@ func NewScheduledPost(id PostID, content PostContent, at ScheduleTime, platform 
 		updatedAt:   now,
 	}
 	p.record(PostScheduled{
-		postID:      id,
+		postID:      p.id,
 		version:     p.version,
 		occurredAt:  now,
 		Content:     content.String(),
 		ScheduledAt: at.Time(),
 		Platform:    platform.String(),
 	})
+	if media != nil {
+		url := media.URL()
+		e := p.events[len(p.events)-1].(PostScheduled)
+		e.MediaURL = &url
+		e.MediaKind = media.Kind()
+		p.events[len(p.events)-1] = e
+	}
 	return p, nil
 }
 
@@ -65,6 +74,10 @@ func (p *ScheduledPost) CreatedAt() time.Time      { return p.createdAt }
 func (p *ScheduledPost) UpdatedAt() time.Time      { return p.updatedAt }
 func (p *ScheduledPost) Status() Status            { return p.state.Status() }
 func (p *ScheduledPost) State() State              { return p.state }
+
+// Media returns the attachment, nil for text-only posts. Media has no mutator:
+// it is part of what was scheduled and cannot change afterward.
+func (p *ScheduledPost) Media() *Media { return p.media }
 
 // PrepareRef returns the platform-side draft reference, nil when nothing has
 // been prepared yet.

@@ -13,9 +13,31 @@ import (
 )
 
 type createRequest struct {
-	Content     string `json:"content"`
-	ScheduledAt string `json:"scheduled_at"`
-	Platform    string `json:"platform"`
+	Content     string      `json:"content"`
+	ScheduledAt string      `json:"scheduled_at"`
+	Platform    string      `json:"platform"`
+	Media       *mediaInput `json:"media,omitempty"`
+}
+
+// mediaInput is the optional attachment on create. Media is immutable after
+// creation, so no update equivalent exists.
+type mediaInput struct {
+	URL  string `json:"url"`
+	Kind string `json:"kind"`
+}
+
+func (r createRequest) MediaURL() string {
+	if r.Media == nil {
+		return ""
+	}
+	return r.Media.URL
+}
+
+func (r createRequest) MediaKind() string {
+	if r.Media == nil {
+		return ""
+	}
+	return r.Media.Kind
 }
 
 type updateRequest struct {
@@ -32,6 +54,8 @@ type createResponse struct {
 type scheduleResponse struct {
 	ID             string  `json:"id"`
 	Content        string  `json:"content"`
+	MediaURL       *string `json:"media_url,omitempty"`
+	MediaKind      *string `json:"media_kind,omitempty"`
 	Status         string  `json:"status"`
 	ScheduledAt    string  `json:"scheduled_at"`
 	Platform       string  `json:"platform"`
@@ -62,6 +86,8 @@ func viewToResponse(v app.ScheduleView) scheduleResponse {
 	return scheduleResponse{
 		ID:             v.ID,
 		Content:        v.Content,
+		MediaURL:       v.MediaURL,
+		MediaKind:      v.MediaKind,
 		Status:         v.Status,
 		ScheduledAt:    v.ScheduledAt.UTC().Format(time.RFC3339),
 		Platform:       v.Platform,

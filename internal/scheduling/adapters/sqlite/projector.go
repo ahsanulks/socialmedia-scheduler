@@ -16,11 +16,13 @@ func NewProjector() *Projector { return &Projector{} }
 
 func (p *Projector) Apply(ctx context.Context, tx *sql.Tx, s domain.Snapshot) error {
 	_, err := tx.ExecContext(ctx, `INSERT INTO schedules_read
-		(id, content, status, scheduled_at, platform, attempts, last_error, external_post_id,
+		(id, content, media_url, media_kind, status, scheduled_at, platform, attempts, last_error, external_post_id,
 		 version, created_at, updated_at, published_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET
 			content = excluded.content,
+			media_url = excluded.media_url,
+			media_kind = excluded.media_kind,
 			status = excluded.status,
 			scheduled_at = excluded.scheduled_at,
 			platform = excluded.platform,
@@ -32,7 +34,8 @@ func (p *Projector) Apply(ctx context.Context, tx *sql.Tx, s domain.Snapshot) er
 			updated_at = excluded.updated_at,
 			published_at = excluded.published_at
 		WHERE excluded.version >= schedules_read.version`,
-		s.ID, s.Content, s.Status, s.ScheduledAt.UTC().UnixMilli(), s.Platform, s.Attempts,
+		s.ID, s.Content, nullableString(s.MediaURL), nullableString(s.MediaKind), s.Status,
+		s.ScheduledAt.UTC().UnixMilli(), s.Platform, s.Attempts,
 		nullableString(s.LastError), nullableString(s.ExternalPostID), s.Version,
 		s.CreatedAt.UTC().UnixMilli(), s.UpdatedAt.UTC().UnixMilli(), nullableMillis(s.PublishedAt))
 	return err

@@ -10,6 +10,9 @@ This is the build contract. If the code and this document disagree, fix one of t
 platform-agnostic adapter port.
 **Changes in 0.3:** each platform's format, limits, and error codes are owned by its adapter and
 declared through `Capabilities()`; the domain no longer encodes any platform's rules.
+**Changes in 0.4 (media):** schedules carry an optional, immutable media attachment
+(https URL + `image`/`video` kind); each adapter declares which kinds it accepts through
+`Capabilities().MediaKinds`.
 
 ---
 
@@ -26,7 +29,7 @@ adapter.
 
 **In scope**
 
-- Create a schedule: text + publish time (+ target platform).
+- Create a schedule: text + publish time (+ target platform), optionally with a media attachment.
 - List the schedule plan (filter, sort, paginate).
 - Get one schedule.
 - Edit content and/or publish time.
@@ -37,7 +40,7 @@ adapter.
 **Out of scope**
 
 - Web or mobile UI.
-- Images, video, carousels.
+- Multiple attachments per post (carousels).
 - Reply chains / multi-post threads.
 - Recurring schedules.
 - Multiple accounts / OAuth per platform.
@@ -63,6 +66,7 @@ No raw `string`/`int` crosses the domain API for these concepts.
 | `Version` | ≥ 1; grows by one per domain change |
 | `Attempt` | ≥ 0; grows by one per publish try |
 | `PrepareRef` | opaque provider-scoped reference, non-empty, ≤ 128 chars |
+| `Media` | optional attachment: valid https URL (≤ 2048 chars) + kind in `image`, `video`; immutable once set |
 | `ExternalPostID` | the platform's post id, non-empty, ≤ 128 chars |
 | `FailureReason` | 1–500 chars, truncated above that |
 
@@ -362,8 +366,10 @@ package app
 // Publication is what an adapter is asked to publish. It grows as the domain
 // grows (media, replies, …) without changing the shape for existing adapters.
 type Publication struct {
-	Platform domain.Platform
-	Content  string
+	Platform  domain.Platform
+	Content   string
+	MediaURL  string // empty for text-only posts
+	MediaKind string // domain media kind; adapters map it to their own payload key
 }
 
 type Publisher interface {
@@ -394,6 +400,7 @@ type Capabilities struct {
 	DailyLimit    int  // posts allowed per rolling 24h; 0 = unknown
 
 	TextLengthInBytes bool // threads counts the 500 limit in UTF-8 bytes (emoji are multi-byte)
+	MediaKinds        []string // domain media kinds the adapter accepts; empty = text-only
 }
 ```
 

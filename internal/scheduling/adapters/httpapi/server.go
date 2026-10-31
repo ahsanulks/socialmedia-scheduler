@@ -136,13 +136,14 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handlePlatforms(w http.ResponseWriter, r *http.Request) {
 	type info struct {
-		Name           string `json:"name"`
-		MaxTextLength  int    `json:"max_text_length"`
-		TextLengthUnit string `json:"max_text_length_unit"`
-		RequiresMedia  bool   `json:"requires_media"`
-		SupportsText   bool   `json:"supports_text"`
-		PreparesDraft  bool   `json:"prepares_draft"`
-		DailyLimit     int    `json:"daily_limit"`
+		Name           string   `json:"name"`
+		MaxTextLength  int      `json:"max_text_length"`
+		TextLengthUnit string   `json:"max_text_length_unit"`
+		MediaKinds     []string `json:"media_kinds"`
+		RequiresMedia  bool     `json:"requires_media"`
+		SupportsText   bool     `json:"supports_text"`
+		PreparesDraft  bool     `json:"prepares_draft"`
+		DailyLimit     int      `json:"daily_limit"`
 	}
 	out := make([]info, 0)
 	for _, p := range s.deps.Registry.Platforms() {
@@ -151,10 +152,13 @@ func (s *Server) handlePlatforms(w http.ResponseWriter, r *http.Request) {
 		if caps.TextLengthInBytes {
 			unit = "bytes"
 		}
+		kinds := []string{}
+		kinds = append(kinds, caps.MediaKinds...)
 		out = append(out, info{
 			Name:           p.String(),
 			MaxTextLength:  caps.MaxTextLength,
 			TextLengthUnit: unit,
+			MediaKinds:     kinds,
 			RequiresMedia:  caps.RequiresMedia,
 			SupportsText:   caps.SupportsText,
 			PreparesDraft:  caps.PreparesDraft,
@@ -183,6 +187,8 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 		Content:     req.Content,
 		ScheduledAt: at,
 		Platform:    platform,
+		MediaURL:    req.MediaURL(),
+		MediaKind:   req.MediaKind(),
 	})
 	if err != nil {
 		s.writeError(w, r, err)
@@ -339,6 +345,16 @@ func (s *Server) writeError(w http.ResponseWriter, r *http.Request, err error) {
 	var limit app.PlatformLimitError
 	if errors.As(err, &limit) {
 		s.problem(w, r, http.StatusUnprocessableEntity, "platform_limit_exceeded", limit.Error())
+		return
+	}
+	var mediaRequired app.MediaRequiredError
+	if errors.As(err, &mediaRequired) {
+		s.problem(w, r, http.StatusUnprocessableEntity, "media_required", mediaRequired.Error())
+		return
+	}
+	var unsupportedMedia app.UnsupportedMediaError
+	if errors.As(err, &unsupportedMedia) {
+		s.problem(w, r, http.StatusUnprocessableEntity, "unsupported_media_type", unsupportedMedia.Error())
 		return
 	}
 	s.log.Error("unhandled error", "error", err, "request_id", requestIDFrom(r.Context()))

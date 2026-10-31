@@ -12,9 +12,11 @@ import (
 )
 
 type Record struct {
-	Content string
-	Ref     string
-	At      time.Time
+	Content   string
+	Ref       string
+	At        time.Time
+	MediaURL  string // empty for text-only posts
+	MediaKind string
 }
 
 type Option func(*Publisher)
@@ -81,7 +83,8 @@ func (p *Publisher) Prepare(ctx context.Context, pub app.Publication) (*domain.P
 	if err != nil {
 		return nil, err
 	}
-	p.prepared = append(p.prepared, Record{Content: pub.Content, Ref: raw, At: time.Now().UTC()})
+	p.prepared = append(p.prepared, Record{Content: pub.Content, Ref: raw, At: time.Now().UTC(),
+		MediaURL: pub.MediaURL, MediaKind: pub.MediaKind})
 	return &ref, nil
 }
 
@@ -97,7 +100,8 @@ func (p *Publisher) Publish(ctx context.Context, pub app.Publication, ref *domai
 	if err != nil {
 		return domain.ExternalPostID{}, err
 	}
-	rec := Record{Content: pub.Content, At: time.Now().UTC()}
+	rec := Record{Content: pub.Content, At: time.Now().UTC(),
+		MediaURL: pub.MediaURL, MediaKind: pub.MediaKind}
 	if ref != nil {
 		rec.Ref = ref.String()
 	}

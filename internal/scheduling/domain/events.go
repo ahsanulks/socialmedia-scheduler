@@ -18,6 +18,8 @@ type PostScheduled struct {
 	Content     string
 	ScheduledAt time.Time
 	Platform    string
+	MediaURL    *string
+	MediaKind   string
 }
 
 func (e PostScheduled) EventType() string     { return "PostScheduled" }

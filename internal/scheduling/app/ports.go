@@ -26,8 +26,10 @@ type IDGenerator interface {
 // Publication is the platform-neutral description of what to publish. It grows
 // as the domain grows (media, replies, …) without changing existing adapters.
 type Publication struct {
-	Platform domain.Platform
-	Content  string
+	Platform  domain.Platform
+	Content   string
+	MediaURL  string // empty for text-only posts
+	MediaKind string // domain media kind; adapters map it to their own payload key
 }
 
 // Capabilities is each adapter's declaration of its own format's rules.
@@ -43,6 +45,11 @@ type Capabilities struct {
 	// as their byte length, so a rune-based check would accept posts the
 	// platform rejects with 400.
 	TextLengthInBytes bool
+
+	// MediaKinds lists the media kinds this adapter accepts (domain.MediaKind*
+	// constants), empty for text-only platforms. RequiresMedia with no media
+	// provided and a kind outside this list are rejected at the API edge.
+	MediaKinds []string
 }
 
 // Publisher is the platform seam. Implementations live in
@@ -155,6 +162,8 @@ func (r *Registry) Platforms() []domain.Platform {
 type ScheduleView struct {
 	ID             string
 	Content        string
+	MediaURL       *string
+	MediaKind      *string
 	Status         string
 	ScheduledAt    time.Time
 	Platform       string

@@ -19,7 +19,7 @@ type ReadRepo struct {
 
 func NewReadRepo(db *sql.DB) *ReadRepo { return &ReadRepo{db: db} }
 
-const viewColumns = `id, content, status, scheduled_at, platform, attempts, last_error,
+const viewColumns = `id, content, media_url, media_kind, status, scheduled_at, platform, attempts, last_error,
 	external_post_id, version, created_at, updated_at, published_at`
 
 func (r *ReadRepo) Get(ctx context.Context, id string) (app.ScheduleView, error) {
@@ -111,10 +111,11 @@ func scanView(row interface{ Scan(dest ...any) error }) (app.ScheduleView, error
 	var (
 		v                                 app.ScheduleView
 		scheduledAt, createdAt, updatedAt int64
+		mediaURL, mediaKind               sql.NullString
 		lastError, externalID             sql.NullString
 		published                         sql.NullInt64
 	)
-	err := row.Scan(&v.ID, &v.Content, &v.Status, &scheduledAt, &v.Platform, &v.Attempts,
+	err := row.Scan(&v.ID, &v.Content, &mediaURL, &mediaKind, &v.Status, &scheduledAt, &v.Platform, &v.Attempts,
 		&lastError, &externalID, &v.Version, &createdAt, &updatedAt, &published)
 	if err != nil {
 		return app.ScheduleView{}, err
@@ -122,6 +123,8 @@ func scanView(row interface{ Scan(dest ...any) error }) (app.ScheduleView, error
 	v.ScheduledAt = time.UnixMilli(scheduledAt).UTC()
 	v.CreatedAt = time.UnixMilli(createdAt).UTC()
 	v.UpdatedAt = time.UnixMilli(updatedAt).UTC()
+	v.MediaURL = stringPtr(mediaURL)
+	v.MediaKind = stringPtr(mediaKind)
 	v.LastError = stringPtr(lastError)
 	v.ExternalPostID = stringPtr(externalID)
 	v.PublishedAt = timePtr(published)

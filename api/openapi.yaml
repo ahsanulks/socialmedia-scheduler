@@ -78,11 +78,15 @@ paths:
                     type: array
                     items:
                       type: object
-                      required: [name, max_text_length, max_text_length_unit, requires_media, supports_text, prepares_draft, daily_limit]
+                      required: [name, max_text_length, max_text_length_unit, media_kinds, requires_media, supports_text, prepares_draft, daily_limit]
                       properties:
                         name: {type: string, example: threads}
                         max_text_length: {type: integer, example: 500}
                         max_text_length_unit: {type: string, enum: [characters, bytes], example: bytes}
+                        media_kinds:
+                          type: array
+                          items: {type: string, enum: [image, video]}
+                          description: Media kinds the adapter accepts; empty for text-only platforms.
                         requires_media: {type: boolean, example: false}
                         supports_text: {type: boolean, example: true}
                         prepares_draft: {type: boolean, example: true}
@@ -313,6 +317,18 @@ components:
           type: string
           description: Target platform adapter. Defaults to "threads"; must be registered.
           example: threads
+        media:
+          type: object
+          required: [url, kind]
+          description: Optional attachment, immutable after creation. URL must be https.
+          properties:
+            url:
+              type: string
+              format: uri
+              example: https://cdn.example.com/photo.jpg
+            kind:
+              type: string
+              enum: [image, video]
 
     UpdateScheduleRequest:
       type: object
@@ -352,6 +368,12 @@ components:
           format: uuid
         content:
           type: string
+        media_url:
+          type: [string, "null"]
+          description: Attachment location; null for text-only posts. Immutable after creation.
+        media_kind:
+          type: [string, "null"]
+          enum: [image, video, null]
         status:
           type: string
           enum: [scheduled, publishing, published, failed, canceled]
@@ -419,6 +441,8 @@ components:
             - validation_failed
             - unsupported_platform
             - platform_limit_exceeded
+            - media_required
+            - unsupported_media_type
             - internal_error
         request_id:
           type: string

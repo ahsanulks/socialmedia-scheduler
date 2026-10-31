@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/ahsanulks/social-scheduler/internal/scheduling/domain"
@@ -13,6 +14,8 @@ type SchedulePost struct {
 	Content     string
 	ScheduledAt time.Time
 	Platform    string
+	MediaURL    string // optional attachment; empty for text-only posts
+	MediaKind   string
 }
 
 type SchedulePostHandler struct {
@@ -39,7 +42,15 @@ func (h *SchedulePostHandler) Handle(ctx context.Context, cmd SchedulePost) (Res
 	if err != nil {
 		return Result{}, err
 	}
-	if err := checkCapabilities(platform, caps, content); err != nil {
+	var media *domain.Media
+	if cmd.MediaURL != "" || cmd.MediaKind != "" {
+		m, err := domain.NewMedia(cmd.MediaURL, cmd.MediaKind)
+		if err != nil {
+			return Result{}, err
+		}
+		media = &m
+	}
+	if err := checkCapabilities(platform, caps, content, media); err != nil {
 		return Result{}, err
 	}
 
@@ -47,7 +58,7 @@ func (h *SchedulePostHandler) Handle(ctx context.Context, cmd SchedulePost) (Res
 	if err != nil {
 		return Result{}, err
 	}
-	post, err := domain.NewScheduledPost(id, content, domain.NewScheduleTime(cmd.ScheduledAt), platform, h.clock.Now())
+	post, err := domain.NewScheduledPost(id, content, media, domain.NewScheduleTime(cmd.ScheduledAt), platform, h.clock.Now())
 	if err != nil {
 		return Result{}, err
 	}
@@ -59,7 +70,7 @@ func (h *SchedulePostHandler) Handle(ctx context.Context, cmd SchedulePost) (Res
 
 // checkCapabilities rejects what the target platform cannot express, before the
 // schedule is stored. Anything not checkable here surfaces in Prepare.
-func checkCapabilities(platform domain.Platform, caps Capabilities, content domain.PostContent) error {
+func checkCapabilities(platform domain.Platform, caps Capabilities, content domain.PostContent, media *domain.Media) error {
 	got, unit := content.RuneCount(), "characters"
 	if caps.TextLengthInBytes {
 		got, unit = content.ByteCount(), "bytes"
@@ -71,12 +82,11 @@ func checkCapabilities(platform domain.Platform, caps Capabilities, content doma
 			Message:  fmt.Sprintf("platform %q allows at most %d %s, got %d", platform.String(), caps.MaxTextLength, unit, got),
 		}
 	}
-	if caps.RequiresMedia && !caps.SupportsText {
-		return PlatformLimitError{
-			Platform: platform.String(),
-			Field:    "media",
-			Message:  fmt.Sprintf("platform %q requires media, which this API does not schedule yet", platform.String()),
-		}
+	if media != nil && !slices.Contains(caps.MediaKinds, media.Kind()) {
+		return UnsupportedMediaError{Platform: platform.String(), Kind: media.Kind()}
+	}
+	if media == nil && caps.RequiresMedia {
+		return MediaRequiredError{Platform: platform.String()}
 	}
 	return nil
 }

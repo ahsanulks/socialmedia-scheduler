@@ -11,7 +11,7 @@ import (
 	"github.com/ahsanulks/social-scheduler/internal/scheduling/domain"
 )
 
-const postColumns = `id, content, scheduled_at, platform, status, version, attempts, prepare_ref,
+const postColumns = `id, content, media_url, media_kind, scheduled_at, platform, status, version, attempts, prepare_ref,
 	next_attempt_at, last_error, lease_until, external_post_id, published_at, failed_at, canceled_at,
 	created_at, updated_at`
 
@@ -50,8 +50,9 @@ func (r *Repo) Save(ctx context.Context, post *domain.ScheduledPost, events []do
 	s := post.Snapshot()
 	if post.BaseVersion().IsZero() {
 		_, err = tx.ExecContext(ctx, `INSERT INTO scheduled_posts (`+postColumns+`)
-			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-			s.ID, s.Content, s.ScheduledAt.UTC().UnixMilli(), s.Platform, s.Status, s.Version, s.Attempts,
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			s.ID, s.Content, nullableString(s.MediaURL), nullableString(s.MediaKind),
+			s.ScheduledAt.UTC().UnixMilli(), s.Platform, s.Status, s.Version, s.Attempts,
 			nullableString(s.PrepareRef), nullableMillis(s.NextAttemptAt), nullableString(s.LastError),
 			nullableMillis(s.LeaseUntil), nullableString(s.ExternalPostID), nullableMillis(s.PublishedAt),
 			nullableMillis(s.FailedAt), nullableMillis(s.CanceledAt),
@@ -61,10 +62,12 @@ func (r *Repo) Save(ctx context.Context, post *domain.ScheduledPost, events []do
 		}
 	} else {
 		res, err := tx.ExecContext(ctx, `UPDATE scheduled_posts SET
+				media_url = ?, media_kind = ?,
 				content = ?, scheduled_at = ?, platform = ?, status = ?, version = ?, attempts = ?,
 				prepare_ref = ?, next_attempt_at = ?, last_error = ?, lease_until = ?,
 				external_post_id = ?, published_at = ?, failed_at = ?, canceled_at = ?, updated_at = ?
 			WHERE id = ? AND version = ?`,
+			nullableString(s.MediaURL), nullableString(s.MediaKind),
 			s.Content, s.ScheduledAt.UTC().UnixMilli(), s.Platform, s.Status, s.Version, s.Attempts,
 			nullableString(s.PrepareRef), nullableMillis(s.NextAttemptAt), nullableString(s.LastError),
 			nullableMillis(s.LeaseUntil), nullableString(s.ExternalPostID), nullableMillis(s.PublishedAt),
@@ -185,12 +188,13 @@ func scanPost(row interface{ Scan(dest ...any) error }) (domain.Snapshot, error)
 	var (
 		s                                          domain.Snapshot
 		scheduledAt, createdAt, updatedAt          int64
+		mediaURL, mediaKind                        sql.NullString
 		prepareRef, lastError, externalID          sql.NullString
 		nextAttempt, leaseUntil, published, failed sql.NullInt64
 		canceled                                   sql.NullInt64
 		status                                     string
 	)
-	err := row.Scan(&s.ID, &s.Content, &scheduledAt, &s.Platform, &status, &s.Version, &s.Attempts,
+	err := row.Scan(&s.ID, &s.Content, &mediaURL, &mediaKind, &scheduledAt, &s.Platform, &status, &s.Version, &s.Attempts,
 		&prepareRef, &nextAttempt, &lastError, &leaseUntil, &externalID, &published, &failed, &canceled,
 		&createdAt, &updatedAt)
 	if err != nil {
@@ -200,6 +204,8 @@ func scanPost(row interface{ Scan(dest ...any) error }) (domain.Snapshot, error)
 	s.ScheduledAt = time.UnixMilli(scheduledAt).UTC()
 	s.CreatedAt = time.UnixMilli(createdAt).UTC()
 	s.UpdatedAt = time.UnixMilli(updatedAt).UTC()
+	s.MediaURL = stringPtr(mediaURL)
+	s.MediaKind = stringPtr(mediaKind)
 	s.PrepareRef = stringPtr(prepareRef)
 	s.LastError = stringPtr(lastError)
 	s.ExternalPostID = stringPtr(externalID)

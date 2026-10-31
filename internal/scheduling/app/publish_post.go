@@ -79,7 +79,14 @@ func (h *PublishPostHandler) Handle(ctx context.Context, id domain.PostID) error
 		))
 	}
 
-	pub := Publication{Platform: post.Platform(), Content: post.Content().String()}
+	pub := Publication{
+		Platform:  post.Platform(),
+		Content:   post.Content().String(),
+		MediaKind: postMediaKind(post),
+	}
+	if pub.MediaKind != "" {
+		pub.MediaURL = post.Media().URL()
+	}
 	ref := post.PrepareRef()
 
 	if ref == nil {
@@ -118,6 +125,15 @@ func (h *PublishPostHandler) Handle(ctx context.Context, id domain.PostID) error
 	)
 	h.finish(ctx, attemptID, domain.OutcomeSucceeded, "", "")
 	return nil
+}
+
+// postMediaKind adapts the optional domain media to the string-typed port; the
+// empty string means text-only.
+func postMediaKind(post *domain.ScheduledPost) string {
+	if m := post.Media(); m != nil {
+		return m.Kind()
+	}
+	return ""
 }
 
 // fail records a failed attempt: a retryable failure with attempts left goes
