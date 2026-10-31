@@ -455,7 +455,22 @@ POST https://graph.threads.net/v1.0/{user-id}/threads_publish
 - Log Meta's `fbtrace_id` from error responses.
 - Details: `docs/THREADS_API_NOTES.md`.
 
-### 7.5 Other adapters
+### 7.5 Facebook Pages adapter
+
+```http
+POST https://graph.facebook.com/{page-id}/feed
+     message=…, access_token=<page access token>
+     → {"id": "<post-id>"}                ← Publish (single call; Prepare does nothing)
+```
+
+- Text only for v1: no `link=`, no media (`Capabilities().MediaKinds` is empty, so the API edge
+  rejects attachments with `unsupported_media_type`).
+- No documented Graph limit on a feed message; `MaxTextLength` = 63,206 (the composer ceiling,
+  defense in depth behind the domain's 5000-character bound). No post quota → `DailyLimit` = 0.
+- Requires a Page access token with `pages_manage_posts` + `pages_read_engagement`.
+- Errors share the Graph envelope with Threads; classification lives in the `graphapi` package.
+
+### 7.6 Other adapters
 
 - `fake` — in-memory publisher used by tests and local dev; always succeeds, records what it was
   asked to publish.
@@ -465,7 +480,7 @@ POST https://graph.threads.net/v1.0/{user-id}/threads_publish
 **Adding a platform must not require changes to the domain, the worker, or the HTTP API.** Only: a
 new package under `adapters/publishers/`, a registration line in `main`, and its own env vars.
 
-### 7.6 Where platform differences live
+### 7.7 Where platform differences live
 
 Every platform has a different payload shape, limits, and error codes. All of it lives inside that
 platform's adapter package — nothing platform-specific reaches the domain, the worker, or the API.
@@ -531,6 +546,10 @@ registered):
 | `THREADS_ACCESS_TOKEN` | — | when enabled |
 | `THREADS_API_BASE` | `https://graph.threads.net/v1.0` | no |
 | `THREADS_DAILY_LIMIT` | `240` | no |
+| `FACEBOOK_ENABLED` | `false` | no |
+| `FACEBOOK_PAGE_ID` | — | when enabled |
+| `FACEBOOK_PAGE_TOKEN` | — | when enabled (Page access token) |
+| `FACEBOOK_API_BASE` | `https://graph.facebook.com` | no |
 
 Startup fails fast on missing required config.
 
@@ -547,6 +566,8 @@ internal/scheduling/
     sqlite/    write repo, claim, projector, read repo, migrations
     publishers/
       threads/ Threads adapter
+      facebook/ Facebook Pages adapter
+      graphapi/ shared Meta Graph error envelope + classification
       fake/    in-memory adapter (tests, dev)
     httpapi/   router, handlers, DTOs, problem+json
   scheduler/   worker

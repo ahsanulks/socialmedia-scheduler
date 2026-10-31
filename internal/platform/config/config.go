@@ -15,6 +15,13 @@ type Threads struct {
 	DailyLimit  int
 }
 
+type Facebook struct {
+	Enabled   bool
+	PageID    string
+	PageToken string
+	BaseURL   string
+}
+
 type Config struct {
 	HTTPAddr        string
 	DatabasePath    string
@@ -26,6 +33,7 @@ type Config struct {
 	MaxAttempts     int
 	LogLevel        string
 	Threads         Threads
+	Facebook        Facebook
 	FakeEnabled     bool
 	FakePlatform    string
 }
@@ -47,6 +55,12 @@ func Load() (Config, error) {
 			AccessToken: os.Getenv("THREADS_ACCESS_TOKEN"),
 			BaseURL:     env("THREADS_API_BASE", "https://graph.threads.net/v1.0"),
 			DailyLimit:  envInt("THREADS_DAILY_LIMIT", 240),
+		},
+		Facebook: Facebook{
+			Enabled:   envBool("FACEBOOK_ENABLED", false),
+			PageID:    os.Getenv("FACEBOOK_PAGE_ID"),
+			PageToken: os.Getenv("FACEBOOK_PAGE_TOKEN"),
+			BaseURL:   env("FACEBOOK_API_BASE", "https://graph.facebook.com"),
 		},
 		FakeEnabled:  envBool("FAKE_PLATFORM_ENABLED", false),
 		FakePlatform: env("FAKE_PLATFORM_NAME", "fake"),

@@ -168,3 +168,8 @@ Open decisions for you:
 value object accepting both `image` and `video` kinds, but platform capabilities gate which
 kinds are accepted — Instagram (M9) declares image first; (2) Facebook stays text-only for
 M8 (`Publication.MediaURL` stays empty); (3) content and media are immutable on reschedule.
+
+**Status:** M7 delivered (media core, migration 0002, capability checks, API fields). M8
+delivered (facebook adapter + graphapi shared error package + config/README/SPEC/runbook
+entries + stub e2e). Facebook v1 is text-only per decision (2); the adapter rejects media
+at prepare time as defense in depth. Link posts (`link=`) are the M8 follow-up when wanted.

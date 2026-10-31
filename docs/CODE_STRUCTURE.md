@@ -53,7 +53,11 @@ internal/
       publishers/
         threads/                 # Prepare = POST /threads, Publish = POST /threads_publish
           publisher.go
-          errors.go              # Graph API status codes → Retryable / Permanent
+          errors.go              # delegates to graphapi.Classify
+        facebook/                # single-call: POST /{page-id}/feed (Prepare is a no-op)
+          publisher.go
+        graphapi/                # shared Meta Graph error envelope → Retryable / Permanent
+          graphapi.go
         fake/                    # in-memory adapter for tests and local dev
           fake.go
       httpapi/

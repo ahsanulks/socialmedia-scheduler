@@ -49,6 +49,9 @@ rejected with `422`.
 | `THREADS_USER_ID` / `THREADS_ACCESS_TOKEN` | — | required when Threads is enabled |
 | `THREADS_API_BASE` | `https://graph.threads.net/v1.0` | |
 | `THREADS_DAILY_LIMIT` | `240` | safety margin under the 250/24h quota |
+| `FACEBOOK_ENABLED` | `false` | register the Facebook Pages adapter |
+| `FACEBOOK_PAGE_ID` / `FACEBOOK_PAGE_TOKEN` | — | required when Facebook is enabled (Page access token, not a user token) |
+| `FACEBOOK_API_BASE` | `https://graph.facebook.com` | pin a version in production (e.g. `https://graph.facebook.com/v23.0`) |
 | `FAKE_PLATFORM_ENABLED` | `false` | register the in-memory adapter (local dev) |
 | `FAKE_PLATFORM_NAME` | `fake` | platform slug for the fake adapter |
 

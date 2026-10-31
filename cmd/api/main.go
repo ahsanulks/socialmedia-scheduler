@@ -12,6 +12,7 @@ import (
 
 	"github.com/ahsanulks/social-scheduler/internal/bootstrap"
 	"github.com/ahsanulks/social-scheduler/internal/platform/config"
+	"github.com/ahsanulks/social-scheduler/internal/scheduling/adapters/publishers/facebook"
 	"github.com/ahsanulks/social-scheduler/internal/scheduling/adapters/publishers/fake"
 	"github.com/ahsanulks/social-scheduler/internal/scheduling/adapters/publishers/threads"
 	"github.com/ahsanulks/social-scheduler/internal/scheduling/app"
@@ -53,6 +54,19 @@ func main() {
 		}
 		publishers = append(publishers, p)
 		logger.Info("threads publisher enabled", "user_id", cfg.Threads.UserID)
+	}
+	if cfg.Facebook.Enabled {
+		p, err := facebook.New(facebook.Config{
+			PageID:    cfg.Facebook.PageID,
+			PageToken: cfg.Facebook.PageToken,
+			BaseURL:   cfg.Facebook.BaseURL,
+		})
+		if err != nil {
+			logger.Error("failed to create facebook publisher", "error", err)
+			os.Exit(1)
+		}
+		publishers = append(publishers, p)
+		logger.Info("facebook publisher enabled", "page_id", cfg.Facebook.PageID)
 	}
 
 	application, err := bootstrap.New(ctx, bootstrap.Config{
