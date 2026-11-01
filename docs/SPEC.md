@@ -470,17 +470,49 @@ POST https://graph.facebook.com/{page-id}/feed
 - Requires a Page access token with `pages_manage_posts` + `pages_read_engagement`.
 - Errors share the Graph envelope with Threads; classification lives in the `graphapi` package.
 
-### 7.6 Other adapters
+### 7.6 Instagram adapter
+
+```http
+POST https://graph.facebook.com/{ig-user-id}/media
+     image_url=…, caption=…, access_token=<user access token>
+     → {"id": "<container-id>"}          ← Prepare, step 1
+
+GET  https://graph.facebook.com/{ig-user-id}/{container-id}?fields=status_code
+     → {"status_code": "FINISHED"}       ← Prepare, step 2 (bounded poll)
+
+POST https://graph.facebook.com/{ig-user-id}/media_publish
+     creation_id=<container-id>, access_token=…
+     → {"id": "<media-id>"}              ← Publish
+```
+
+- Media is required (`Capabilities().RequiresMedia = true`); v1 is images only —
+  `MediaKinds` = `["image"]` (`domain.MediaKindImage`), and the adapter rejects any other kind
+  at prepare time as defense in depth.
+- Captions max 2,200 characters, counted in characters (`MaxTextLength` = 2200); rune-counted
+  until a live test proves emoji counting is byte-based like Threads
+  (`TextLengthInBytes` stays false).
+- Account limit 100 API-published posts per rolling 24h, enforced on `media_publish`; the
+  adapter caps itself at `DailyLimit` = 90 (safety margin).
+- The prepare phase waits for `FINISHED` with a bounded poll (~15s first poll, ~15s interval,
+  ≤90s total, inside the default 2-minute publish lease). Still `IN_PROGRESS` at the deadline
+  is retryable: the worker requeues with backoff, and an unpublished container is valid for
+  24h. Container `ERROR`/`EXPIRED` is permanent.
+- Requires a Facebook *user* access token with `instagram_basic` + `instagram_content_publish`
+  (a Page token does not work), a professional account linked to a Page, and Page Publishing
+  Authorization.
+- Errors share the Graph envelope and classification with Threads/Facebook (`graphapi`).
+
+### 7.7 Other adapters
 
 - `fake` — in-memory publisher used by tests and local dev; always succeeds, records what it was
   asked to publish.
-- Future: Instagram, X, LinkedIn, Mastodon, or any HTTP API that can create-then-publish or publish
+- Future: X, LinkedIn, Mastodon, or any HTTP API that can create-then-publish or publish
   in one call.
 
 **Adding a platform must not require changes to the domain, the worker, or the HTTP API.** Only: a
 new package under `adapters/publishers/`, a registration line in `main`, and its own env vars.
 
-### 7.7 Where platform differences live
+### 7.8 Where platform differences live
 
 Every platform has a different payload shape, limits, and error codes. All of it lives inside that
 platform's adapter package — nothing platform-specific reaches the domain, the worker, or the API.
@@ -498,7 +530,8 @@ How the formats differ, and therefore what each adapter owns:
 | Platform | Its own format | The adapter owns |
 |---|---|---|
 | Threads | text only, 500 chars, two-step container → publish | container creation, the 500-char rule, Meta error codes |
-| Instagram | media required, caption ≤ 2200 chars | media container + status polling, caption rule, "no text-only post" |
+| Facebook | text only for v1, single-call publish | the endpoint param shape, the 63,206 composer bound |
+| Instagram | media required, caption ≤ 2200 chars, image containers | media container + status polling, caption rule, "no text-only post" |
 | X | text ≤ 280 chars, optional media, its own buckets | payload shape, the 280-char rule, rate buckets |
 | LinkedIn / Mastodon | different payloads and limits again | ditto |
 
@@ -550,6 +583,11 @@ registered):
 | `FACEBOOK_PAGE_ID` | — | when enabled |
 | `FACEBOOK_PAGE_TOKEN` | — | when enabled (Page access token) |
 | `FACEBOOK_API_BASE` | `https://graph.facebook.com` | no |
+| `INSTAGRAM_ENABLED` | `false` | no |
+| `INSTAGRAM_USER_ID` | — | when enabled (the IG account id, not the Page id) |
+| `INSTAGRAM_ACCESS_TOKEN` | — | when enabled (user token with `instagram_basic` + `instagram_content_publish`) |
+| `INSTAGRAM_API_BASE` | `https://graph.facebook.com` | no |
+| `INSTAGRAM_DAILY_LIMIT` | `90` | safety margin under the 100/24h quota |
 
 Startup fails fast on missing required config.
 
@@ -652,6 +690,11 @@ Built and covered by the end-to-end suite (`e2e/`, `go test -race ./...`):
 - The Threads adapter is exercised against a stubbed Graph API (two-call sequence, reference
   reuse on retry, 429 → retryable, 400 → permanent). It has not been pointed at the live API yet —
   that needs `THREADS_USER_ID` and `THREADS_ACCESS_TOKEN`, and it will create a real post.
+- The Facebook Pages adapter (text-only, single call, no draft) and the Instagram adapter
+  (media-required image posts with a bounded container-status poll in Prepare) share the same
+  stub-e2e treatment at `e2e/facebook_adapter_test.go` and `e2e/instagram_adapter_test.go`.
+  `graphapi.Classify` maps errors identically for all three Meta adapters. Neither has been
+  pointed at the live Graph API yet (`FACEBOOK_*` / `INSTAGRAM_*` env vars); that is M10.
 
 Deferred (M6): idempotency keys on create, Dockerfile, ops runbook, contract test between
 `api/openapi.yaml` and the handlers, and the manual reconciliation path for the at-least-once

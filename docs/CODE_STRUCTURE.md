@@ -56,8 +56,10 @@ internal/
           errors.go              # delegates to graphapi.Classify
         facebook/                # single-call: POST /{page-id}/feed (Prepare is a no-op)
           publisher.go
-        graphapi/                # shared Meta Graph error envelope → Retryable / Permanent
-          graphapi.go
+        instagram/               # two-step: POST /media -> poll status -> POST /media_publish
+          publisher.go           # image-only, bounded container poll in Prepare
+        graphapi/                # shared Meta Graph error envelope -> Retryable / Permanent,
+          graphapi.go            # form-POST + JSON-GET client, poll timing for containers
         fake/                    # in-memory adapter for tests and local dev
           fake.go
       httpapi/

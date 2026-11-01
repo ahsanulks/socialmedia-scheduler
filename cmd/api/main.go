@@ -14,6 +14,7 @@ import (
 	"github.com/ahsanulks/social-scheduler/internal/platform/config"
 	"github.com/ahsanulks/social-scheduler/internal/scheduling/adapters/publishers/facebook"
 	"github.com/ahsanulks/social-scheduler/internal/scheduling/adapters/publishers/fake"
+	"github.com/ahsanulks/social-scheduler/internal/scheduling/adapters/publishers/instagram"
 	"github.com/ahsanulks/social-scheduler/internal/scheduling/adapters/publishers/threads"
 	"github.com/ahsanulks/social-scheduler/internal/scheduling/app"
 )
@@ -56,17 +57,35 @@ func main() {
 		logger.Info("threads publisher enabled", "user_id", cfg.Threads.UserID)
 	}
 	if cfg.Facebook.Enabled {
-		p, err := facebook.New(facebook.Config{
-			PageID:    cfg.Facebook.PageID,
-			PageToken: cfg.Facebook.PageToken,
-			BaseURL:   cfg.Facebook.BaseURL,
-		})
+		if cfg.Facebook.PageID == "" || cfg.Facebook.PageToken == "" {
+			logger.Error("FACEBOOK_PAGE_ID and FACEBOOK_PAGE_TOKEN are required when FACEBOOK_ENABLED=true")
+			os.Exit(1)
+		}
+		p, err := facebook.New(facebook.Config{PageID: cfg.Facebook.PageID, PageToken: cfg.Facebook.PageToken, BaseURL: cfg.Facebook.BaseURL})
 		if err != nil {
 			logger.Error("failed to create facebook publisher", "error", err)
 			os.Exit(1)
 		}
 		publishers = append(publishers, p)
 		logger.Info("facebook publisher enabled", "page_id", cfg.Facebook.PageID)
+	}
+	if cfg.Instagram.Enabled {
+		if cfg.Instagram.UserID == "" || cfg.Instagram.Token == "" {
+			logger.Error("INSTAGRAM_USER_ID and INSTAGRAM_ACCESS_TOKEN are required when INSTAGRAM_ENABLED=true")
+			os.Exit(1)
+		}
+		p, err := instagram.New(instagram.Config{
+			UserID:     cfg.Instagram.UserID,
+			Token:      cfg.Instagram.Token,
+			BaseURL:    cfg.Instagram.BaseURL,
+			DailyLimit: cfg.Instagram.DailyLimit,
+		})
+		if err != nil {
+			logger.Error("failed to create instagram publisher", "error", err)
+			os.Exit(1)
+		}
+		publishers = append(publishers, p)
+		logger.Info("instagram publisher enabled", "user_id", cfg.Instagram.UserID)
 	}
 
 	application, err := bootstrap.New(ctx, bootstrap.Config{

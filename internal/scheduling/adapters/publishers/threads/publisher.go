@@ -4,14 +4,13 @@ package threads
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
+	"github.com/ahsanulks/social-scheduler/internal/scheduling/adapters/publishers/graphapi"
 	"github.com/ahsanulks/social-scheduler/internal/scheduling/app"
 	"github.com/ahsanulks/social-scheduler/internal/scheduling/domain"
 )
@@ -118,25 +117,5 @@ func (p *Publisher) Publish(ctx context.Context, pub app.Publication, ref *domai
 }
 
 func (p *Publisher) postForm(ctx context.Context, path string, form url.Values, out any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		strings.TrimRight(p.cfg.BaseURL, "/")+path, strings.NewReader(form.Encode()))
-	if err != nil {
-		return app.Permanent(err, "threads: bad request")
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-	resp, err := p.client.Do(req)
-	if err != nil {
-		return app.Retryable(err, "threads: network error")
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		if err := json.Unmarshal(body, out); err != nil {
-			return app.Retryable(err, "threads: unreadable response")
-		}
-		return nil
-	}
-	return classify(resp.StatusCode, body)
+	return graphapi.PostForm(ctx, "threads", p.cfg.BaseURL, p.client, path, form, out)
 }

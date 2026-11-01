@@ -22,6 +22,14 @@ type Facebook struct {
 	BaseURL   string
 }
 
+type Instagram struct {
+	Enabled    bool
+	UserID     string
+	Token      string
+	BaseURL    string
+	DailyLimit int
+}
+
 type Config struct {
 	HTTPAddr        string
 	DatabasePath    string
@@ -34,6 +42,7 @@ type Config struct {
 	LogLevel        string
 	Threads         Threads
 	Facebook        Facebook
+	Instagram       Instagram
 	FakeEnabled     bool
 	FakePlatform    string
 }
@@ -61,6 +70,13 @@ func Load() (Config, error) {
 			PageID:    os.Getenv("FACEBOOK_PAGE_ID"),
 			PageToken: os.Getenv("FACEBOOK_PAGE_TOKEN"),
 			BaseURL:   env("FACEBOOK_API_BASE", "https://graph.facebook.com"),
+		},
+		Instagram: Instagram{
+			Enabled:    envBool("INSTAGRAM_ENABLED", false),
+			UserID:     os.Getenv("INSTAGRAM_USER_ID"),
+			Token:      os.Getenv("INSTAGRAM_ACCESS_TOKEN"),
+			BaseURL:    env("INSTAGRAM_API_BASE", "https://graph.facebook.com"),
+			DailyLimit: envInt("INSTAGRAM_DAILY_LIMIT", 90),
 		},
 		FakeEnabled:  envBool("FAKE_PLATFORM_ENABLED", false),
 		FakePlatform: env("FAKE_PLATFORM_NAME", "fake"),

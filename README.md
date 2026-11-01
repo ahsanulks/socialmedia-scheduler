@@ -52,6 +52,10 @@ rejected with `422`.
 | `FACEBOOK_ENABLED` | `false` | register the Facebook Pages adapter |
 | `FACEBOOK_PAGE_ID` / `FACEBOOK_PAGE_TOKEN` | — | required when Facebook is enabled (Page access token, not a user token) |
 | `FACEBOOK_API_BASE` | `https://graph.facebook.com` | pin a version in production (e.g. `https://graph.facebook.com/v23.0`) |
+| `INSTAGRAM_ENABLED` | `false` | register the Instagram adapter (image posts) |
+| `INSTAGRAM_USER_ID` / `INSTAGRAM_ACCESS_TOKEN` | — | required when Instagram is enabled (user token with `instagram_basic` + `instagram_content_publish`) |
+| `INSTAGRAM_API_BASE` | `https://graph.facebook.com` | pin a version in production |
+| `INSTAGRAM_DAILY_LIMIT` | `90` | safety margin under the 100/24h publish quota |
 | `FAKE_PLATFORM_ENABLED` | `false` | register the in-memory adapter (local dev) |
 | `FAKE_PLATFORM_NAME` | `fake` | platform slug for the fake adapter |
 

@@ -9,9 +9,7 @@ package facebook
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -114,30 +112,8 @@ func (p *Publisher) Publish(ctx context.Context, pub app.Publication, ref *domai
 }
 
 func (p *Publisher) postForm(ctx context.Context, path string, form url.Values, out any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		strings.TrimRight(p.cfg.BaseURL, "/")+path, strings.NewReader(form.Encode()))
-	if err != nil {
-		return app.Permanent(err, "facebook: bad request")
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-	resp, err := p.client.Do(req)
-	if err != nil {
-		return app.Retryable(err, "facebook: network error")
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		if err := json.Unmarshal(body, out); err != nil {
-			// Known tradeoff: a succeeded feed post whose response we cannot
-			// parse would be retried and could double-post. Graph returns
-			// JSON on success in practice, and retrying is the safer default
-			// for the worker (a permanent here would strand a post that may
-			// have gone out). Worth revisiting if it is ever observed live.
-			return app.Retryable(err, "facebook: unreadable response")
-		}
-		return nil
-	}
-	return graphapi.Classify("facebook", resp.StatusCode, body)
+	// See graphapi.PostForm: the retryable unreadable-2xx corner could
+	// double-post for this single-call adapter; documented tradeoff, kept
+	// for one shared client code path.
+	return graphapi.PostForm(ctx, "facebook", p.cfg.BaseURL, p.client, path, form, out)
 }

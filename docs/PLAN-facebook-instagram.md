@@ -173,3 +173,8 @@ M8 (`Publication.MediaURL` stays empty); (3) content and media are immutable on 
 delivered (facebook adapter + graphapi shared error package + config/README/SPEC/runbook
 entries + stub e2e). Facebook v1 is text-only per decision (2); the adapter rejects media
 at prepare time as defense in depth. Link posts (`link=`) are the M8 follow-up when wanted.
+M9 delivered (instagram adapter: image containers with the bounded status poll, media_publish,
+`RequiresMedia` + image-only `MediaKinds` per decision (1) — video is deferred like facebook
+media; config/main wiring, graphapi shared form-POST client, stub e2e incl. poll-timeout
+requeue, container ERROR, 429, daily budget, and API rule tests). Live verification of both
+accounts (M10) remains.
