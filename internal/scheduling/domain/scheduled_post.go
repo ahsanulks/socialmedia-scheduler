@@ -44,21 +44,20 @@ func NewScheduledPost(id PostID, content PostContent, media *Media, at ScheduleT
 		createdAt:   now,
 		updatedAt:   now,
 	}
-	p.record(PostScheduled{
+	event := PostScheduled{
 		postID:      p.id,
 		version:     p.version,
 		occurredAt:  now,
 		Content:     content.String(),
 		ScheduledAt: at.Time(),
 		Platform:    platform.String(),
-	})
+	}
 	if media != nil {
 		url := media.URL()
-		e := p.events[len(p.events)-1].(PostScheduled)
-		e.MediaURL = &url
-		e.MediaKind = media.Kind()
-		p.events[len(p.events)-1] = e
+		event.MediaURL = &url
+		event.MediaKind = media.Kind()
 	}
+	p.record(event)
 	return p, nil
 }
 

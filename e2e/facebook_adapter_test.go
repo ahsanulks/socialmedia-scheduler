@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 
 // feedStub stands in for the Facebook Graph API's /{page-id}/feed endpoint.
 type feedStub struct {
+	mu         sync.Mutex
 	calls      int
 	lastPath   string
 	lastParams map[string]string
@@ -28,6 +30,8 @@ type feedStub struct {
 func (s *feedStub) handler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
+		s.mu.Lock()
+		defer s.mu.Unlock()
 		s.calls++
 		s.lastPath = r.URL.Path
 		params := map[string]string{}
@@ -42,6 +46,12 @@ func (s *feedStub) handler() http.HandlerFunc {
 		s.lastParams = params
 		_, _ = w.Write([]byte(`{"id":"2345678901_9876543210"}`))
 	}
+}
+
+func (s *feedStub) callCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.calls
 }
 
 func newFacebookPublisher(t *testing.T, baseURL string) *facebook.Publisher {
@@ -70,8 +80,8 @@ func TestFacebookAdapterPublishesThroughGraphAPI(t *testing.T) {
 		t.Fatalf("external_post_id: %v", got["external_post_id"])
 	}
 
-	if stub.calls != 1 {
-		t.Fatalf("single-call publish: want 1 call, got %d", stub.calls)
+	if stub.callCount() != 1 {
+		t.Fatalf("single-call publish: want 1 call, got %d", stub.callCount())
 	}
 	if !strings.HasSuffix(stub.lastPath, "/1234567890/feed") {
 		t.Fatalf("feed path: %v", stub.lastPath)
@@ -108,8 +118,37 @@ func TestFacebookAdapterMapsRetryableError(t *testing.T) {
 	if got["external_post_id"] != "2345678901_9876543210" {
 		t.Fatalf("external_post_id after retry: %v", got["external_post_id"])
 	}
-	if stub.calls < 2 {
-		t.Fatalf("retry did not reach the adapter again: %d calls", stub.calls)
+	if stub.callCount() < 2 {
+		t.Fatalf("retry did not reach the adapter again: %d calls", stub.callCount())
+	}
+}
+
+func TestFacebookAdapterMapsRateLimitRetryable(t *testing.T) {
+	// A 429 from the Graph API must be retryable, same as a 5xx: the post
+	// stays scheduled with a backoff and publishes once the budget clears.
+	stub := &feedStub{failTimes: 1, failStatus: http.StatusTooManyRequests}
+	srv := httptest.NewServer(stub.handler())
+	defer srv.Close()
+
+	e := newEnv(t, []app.Publisher{newFacebookPublisher(t, srv.URL)})
+	id, _ := e.create("rate limited", atIn(2*time.Second), "facebook")
+
+	got := e.waitFor(id, func(m map[string]any) bool { return m["last_error"] != nil })
+	if got["status"] != "scheduled" {
+		t.Fatalf("429 must be retryable, got status %v", got["status"])
+	}
+	if !strings.Contains(got["last_error"].(string), "429") {
+		t.Fatalf("last_error: %v", got["last_error"])
+	}
+
+	// Make the retry due now instead of waiting for the backoff.
+	if _, err := e.db.Exec(`UPDATE scheduled_posts SET next_attempt_at = ? WHERE id = ?`,
+		time.Now().UTC().Add(-time.Second).UnixMilli(), id); err != nil {
+		t.Fatalf("force retry: %v", err)
+	}
+	e.waitFor(id, statusIs("published"))
+	if stub.callCount() != 2 {
+		t.Fatalf("calls after retry: want 2, got %d", stub.callCount())
 	}
 }
 

@@ -100,7 +100,9 @@ func (p *Publisher) Publish(ctx context.Context, pub app.Publication, ref *domai
 	var out struct {
 		ID string `json:"id"`
 	}
-	if err := p.postForm(ctx, "/"+p.cfg.PageID+"/feed", form, &out); err != nil {
+	// PageID is operator-configured, but escape it anyway: a slash or space in
+	// a misconfigured env var must not silently change the endpoint path.
+	if err := p.postForm(ctx, "/"+url.PathEscape(p.cfg.PageID)+"/feed", form, &out); err != nil {
 		return domain.ExternalPostID{}, err
 	}
 	// The id from /feed is opaque (often "{post_id}_{story_id}") — stored as-is.
@@ -128,6 +130,11 @@ func (p *Publisher) postForm(ctx context.Context, path string, form url.Values, 
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		if err := json.Unmarshal(body, out); err != nil {
+			// Known tradeoff: a succeeded feed post whose response we cannot
+			// parse would be retried and could double-post. Graph returns
+			// JSON on success in practice, and retrying is the safer default
+			// for the worker (a permanent here would strand a post that may
+			// have gone out). Worth revisiting if it is ever observed live.
 			return app.Retryable(err, "facebook: unreadable response")
 		}
 		return nil
