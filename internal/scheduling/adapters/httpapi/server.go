@@ -1,10 +1,14 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -17,9 +21,13 @@ import (
 	"github.com/ahsanulks/social-scheduler/internal/scheduling/domain"
 )
 
-const maxBodyBytes = 1 << 20 // 1 MiB
+const (
+	maxBodyBytes         = 1 << 20 // 1 MiB
+	maxIdempotencyKeyLen = 255
+)
 
 type Deps struct {
+	Idempotency     app.IdempotencyStore
 	Create          *app.SchedulePostHandler
 	Update          *app.UpdateScheduleHandler
 	Cancel          *app.CancelScheduleHandler
@@ -169,6 +177,51 @@ func (s *Server) handlePlatforms(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
+	// Read the raw body first: the idempotency request hash is taken over
+	// exactly the bytes the client sent, before the decoder re-formats them.
+	idemKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	var bodyHash string
+	if idemKey != "" {
+		if s.deps.Idempotency == nil {
+			s.problem(w, r, http.StatusServiceUnavailable, "idempotency_not_configured",
+				"Idempotency-Key support is not enabled on this deployment")
+			return
+		}
+		if len(idemKey) > maxIdempotencyKeyLen {
+			s.problem(w, r, http.StatusBadRequest, "bad_request",
+				"Idempotency-Key must be at most 255 characters")
+			return
+		}
+	}
+	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBodyBytes))
+	if err != nil {
+		s.problem(w, r, http.StatusBadRequest, "bad_request",
+			"body must be valid JSON under "+strconv.Itoa(maxBodyBytes)+" bytes")
+		return
+	}
+	if idemKey != "" {
+		sum := sha256.Sum256(raw)
+		bodyHash = hex.EncodeToString(sum[:])
+		rec, found, err := s.deps.Idempotency.Get(idemKey)
+		if err != nil {
+			s.problem(w, r, http.StatusInternalServerError, "internal_error", "idempotency lookup failed")
+			return
+		}
+		if found {
+			if rec.RequestHash != bodyHash {
+				s.problem(w, r, http.StatusUnprocessableEntity, "idempotency_key_mismatch",
+					"this Idempotency-Key was used with a different request body")
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Idempotency-Replayed", "true")
+			w.WriteHeader(rec.StatusCode)
+			_, _ = w.Write([]byte(rec.Response))
+			return
+		}
+	}
+
+	r.Body = io.NopCloser(bytes.NewReader(raw))
 	var req createRequest
 	if err := decodeJSON(r, &req); err != nil {
 		s.problem(w, r, http.StatusBadRequest, "bad_request", err.Error())
@@ -193,6 +246,22 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.writeError(w, r, err)
 		return
+	}
+	if idemKey != "" {
+		resp, err := json.Marshal(createResponse{ID: res.ID, Version: res.Version})
+		if err == nil {
+			// Stored before the response is written so an interrupted
+			// response still replays. Failure to store is logged, never
+			// failed: the create itself succeeded.
+			if err := s.deps.Idempotency.Put(app.IdempotencyRecord{
+				Key:         idemKey,
+				RequestHash: bodyHash,
+				StatusCode:  http.StatusCreated,
+				Response:    string(resp),
+			}); err != nil {
+				s.log.Warn("storing idempotency key failed", "key_id", idemKey, "error", err)
+			}
+		}
 	}
 	w.Header().Set("Location", "/api/v1/schedules/"+res.ID)
 	writeJSON(w, http.StatusCreated, createResponse{ID: res.ID, Version: res.Version})

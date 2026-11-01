@@ -59,6 +59,17 @@ rejected with `422`.
 | `FAKE_PLATFORM_ENABLED` | `false` | register the in-memory adapter (local dev) |
 | `FAKE_PLATFORM_NAME` | `fake` | platform slug for the fake adapter |
 
+Run it in Docker (multi-stage build, distroless runtime):
+
+```bash
+docker build -t social-scheduler .
+docker run --rm -p 8080:8080 -v /srv/scheduler:/data \
+  -e API_TOKEN=... -e DATABASE_PATH=/data/scheduler.db social-scheduler
+```
+
+`POST /schedules` accepts an optional `Idempotency-Key` header: same key + body replays the
+first response instead of creating a second schedule (M6). Operations details: `docs/RUNBOOK.md`.
+
 Local development without Meta credentials:
 
 ```bash

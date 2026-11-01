@@ -90,6 +90,7 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 	list := app.NewListSchedulesHandler(read)
 
 	server := httpapi.New(httpapi.Deps{
+		Idempotency:     sqlite.NewIdempotencyStore(db),
 		Create:          create,
 		Update:          update,
 		Cancel:          cancel,

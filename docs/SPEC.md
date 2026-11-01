@@ -225,6 +225,10 @@ Content-Type: application/json
 - `scheduled_at` required, RFC 3339 **UTC with `Z`**, must be in the future.
 - `platform` optional; defaults to `threads`. Must be a registered platform, else
   `422 unsupported_platform`.
+- Optional `Idempotency-Key` request header (≤255 characters): the same key with byte-identical
+  body replays the stored `201` response (plus an `Idempotency-Replayed: true` header) instead
+  of creating a second schedule; the same key with a different body returns
+  `422 idempotency_key_mismatch`. Requests without the header are unaffected.
 - Response `201 { "id": "0192…", "version": 1 }`.
 
 ### 5.3 List
@@ -702,6 +706,24 @@ Built and covered by the end-to-end suite (`e2e/`, `go test -race ./...`):
   `graphapi.Classify` maps errors identically for all three Meta adapters. Neither has been
   pointed at the live Graph API yet (`FACEBOOK_*` / `INSTAGRAM_*` env vars); that is M10.
 
-Deferred (M6): idempotency keys on create, Dockerfile, ops runbook, contract test between
-`api/openapi.yaml` and the handlers, and the manual reconciliation path for the at-least-once
-duplicate window.
+Deferred at M6 and since delivered (details in §14 below): idempotency keys on
+create, Dockerfile, ops runbook, contract test between `api/openapi.yaml` and the handlers.
+Still open: the manual reconciliation path for the residual at-least-once duplicate window.
+
+## 14. M6 hardening status
+
+Delivered since the M6 deferral note above:
+
+- **Idempotency keys** (`migrations/0003_idempotency_keys.sql`, `app.IdempotencyStore`,
+  SQLite store): `POST /schedules` replays the stored `201` response for the same
+  `Idempotency-Key` + body hash (`Idempotency-Replayed: true`); a reused key with a different
+  body returns `422 idempotency_key_mismatch`. First writer wins on racing duplicates. The
+  residual window (crash between create and store, or a client that never got its key row)
+  is the documented at-least-once gap; the duplicate then has no saved key.
+- **Dockerfile** (multi-stage, CGO off, distroless static runtime + `.dockerignore`).
+- **Ops runbook** (`docs/RUNBOOK.md`): run/probe, migrations on startup, Docker rules
+  (one process per database, persistent volume), backup via `VACUUM INTO` + cron, restore,
+  database layout, common failures.
+- **Contract test** (`e2e/openapi_contract_test.go`): every operation in `api/openapi.yaml`
+  answers with a registered route (never 404), all server routes are declared in the spec,
+  and no spec-declared path answers to a method the spec does not declare.

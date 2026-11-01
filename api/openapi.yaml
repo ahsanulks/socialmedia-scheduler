@@ -262,10 +262,14 @@ components:
       name: Idempotency-Key
       in: header
       required: false
-      description: Replaying the same key with the same body returns the original response.
+      description: >
+        Client-supplied key. Repeating the same key with the same body replays
+        the originally stored response (with an Idempotency-Replayed: true
+        header) instead of creating a second schedule. The same key with a
+        different body is rejected with 422 idempotency_key_mismatch.
       schema:
         type: string
-        maxLength: 128
+        maxLength: 255
 
   responses:
     BadRequest:
