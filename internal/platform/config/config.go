@@ -90,6 +90,14 @@ func Load() (Config, error) {
 	if cfg.SchedulerBatch <= 0 {
 		return Config{}, fmt.Errorf("SCHEDULER_BATCH must be positive")
 	}
+	for name, limit := range map[string]int{
+		"THREADS_DAILY_LIMIT":   cfg.Threads.DailyLimit,
+		"INSTAGRAM_DAILY_LIMIT": cfg.Instagram.DailyLimit,
+	} {
+		if limit < 0 {
+			return Config{}, fmt.Errorf("%s must be non-negative", name)
+		}
+	}
 	return cfg, nil
 }
 

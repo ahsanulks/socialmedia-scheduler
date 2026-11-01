@@ -6,6 +6,7 @@ package graphapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -69,9 +70,11 @@ func Classify(platform string, status int, body []byte) error {
 //
 // Known tradeoff: a 2xx body that does not parse is retryable even though the
 // server may have applied the change. The retry flows tolerate a re-send
-// (Threads re-publishes an existing container), but Facebook's single feed call
-// could double-post in that corner; the exception is documented in its
-// adapter and stayed inheritable so all three adapters keep one code path.
+// (Threads re-publishes an existing container, Instagram re-publishes the same
+// creation_id), but Facebook's single feed call could double-post in that
+// corner; the exception is documented in its adapter and stayed inheritable so
+// all three adapters keep one code path. If live testing ever shows an
+// adapter's re-publish is not idempotent, give that adapter its own client.
 func PostForm(ctx context.Context, platform, baseURL string, client *http.Client, path string, form url.Values, out any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		strings.TrimRight(baseURL, "/")+path, strings.NewReader(form.Encode()))
@@ -82,10 +85,14 @@ func PostForm(ctx context.Context, platform, baseURL string, client *http.Client
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return app.Retryable(err, platform+": network error")
+		return app.Retryable(scrubTransportError(err), platform+": network error")
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		// A truncated body is indistinguishable from a hung server: retryable.
+		return app.Retryable(err, platform+": truncated response body")
+	}
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		if err := json.Unmarshal(body, out); err != nil {
@@ -107,10 +114,13 @@ func GetJSON(ctx context.Context, platform, baseURL string, client *http.Client,
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return app.Retryable(err, platform+": network error")
+		return app.Retryable(scrubTransportError(err), platform+": network error")
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return app.Retryable(err, platform+": truncated response body")
+	}
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		if err := json.Unmarshal(body, out); err != nil {
@@ -119,6 +129,18 @@ func GetJSON(ctx context.Context, platform, baseURL string, client *http.Client,
 		return nil
 	}
 	return Classify(platform, resp.StatusCode, body)
+}
+
+// scrubTransportError strips net/url.Error's embedded request URL. Graph URLs
+// carry the access token (either in the query string or the form body echoed
+// in some error messages), so transport failures must never carry the target
+// URL into error text that may end up in logs or last_error.
+func scrubTransportError(err error) error {
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		return fmt.Errorf("%s: %w", ue.Op, ue.Err)
+	}
+	return err
 }
 
 // PollTiming bounds a container-status wait. Defaults follow the
@@ -144,30 +166,37 @@ func (t PollTiming) WithDefaults() PollTiming {
 }
 
 // Wait runs poll() until it reports done or an error, or until the deadline
-// elapses. Missing a still-processing container by the deadline is a retryable
-// outcome: the worker requeues with backoff, and the container lives 24h.
-func (t PollTiming) Wait(ctx context.Context, startedAt time.Time, poll func() (done bool, err error)) error {
+// elapses. The whole wait is bounded by a context timeout, so a poll request in
+// flight is aborted at the deadline instead of overshooting it; the caller must
+// propagate ctx into its HTTP requests (the shared clients do). Missing a
+// still-processing container by the deadline is a retryable outcome: the
+// worker requeues with backoff, and the container lives 24h.
+func (t PollTiming) Wait(ctx context.Context, platform string, poll func() (done bool, err error)) error {
+	t = t.WithDefaults()
+	ctx, cancel := context.WithTimeout(ctx, t.Deadline)
+	defer cancel()
+	notReady := func() error {
+		reason := fmt.Sprintf("%s: container still processing; requeued", platform)
+		return app.Retryable(fmt.Errorf("%s: container not ready in %s", platform, t.Deadline), reason)
+	}
 	if delay := t.Start; delay > 0 {
-		timer := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():
-			timer.Stop()
-			return app.Retryable(ctx.Err(), "context canceled while waiting for container")
-		case <-timer.C:
+			return notReady()
+		case <-time.After(delay):
 		}
 	}
 	for {
+		if ctx.Err() != nil {
+			return notReady()
+		}
 		done, err := poll()
 		if err != nil || done {
 			return err
 		}
-		if time.Since(startedAt) >= t.Deadline {
-			return app.Retryable(fmt.Errorf("instagram: container not ready in %s", t.Deadline),
-				"instagram: container still processing; requeued")
-		}
 		select {
 		case <-ctx.Done():
-			return app.Retryable(ctx.Err(), "context canceled while polling container")
+			return notReady()
 		case <-time.After(t.Interval):
 		}
 	}

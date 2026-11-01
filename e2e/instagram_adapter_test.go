@@ -31,6 +31,8 @@ type igStub struct {
 	publishCalls int
 	statusCalls  int
 
+	createDelayOnce time.Duration // sleep on the first container-creation call only
+
 	statusScript []string // returned per poll call; the last entry repeats
 	lastImageURL string
 	lastCaption  string
@@ -48,6 +50,15 @@ func (s *igStub) handler() http.HandlerFunc {
 
 		switch {
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/media"):
+			if s.createDelayOnce > 0 {
+				// Sleep outside the lock below: the delay happens once, on
+				// purpose, to simulate a slow container-creation call.
+				delay := s.createDelayOnce
+				s.createDelayOnce = 0
+				s.mu.Unlock()
+				time.Sleep(delay)
+				s.mu.Lock()
+			}
 			s.createCalls++
 			s.lastImageURL = r.PostForm.Get("image_url")
 			s.lastCaption = r.PostForm.Get("caption")
@@ -245,6 +256,33 @@ func TestInstagramAdapterDailyBudgetHoldsSecondPost(t *testing.T) {
 	}
 	if stub.publishCalls != 1 {
 		t.Fatalf("publishes: want 1 (budget held), got %d", stub.publishCalls)
+	}
+}
+
+func TestInstagramAdapterExpiredLeasePreventsDuplicatePublish(t *testing.T) {
+	// A container-creation call that outlives the lease must not publish on a
+	// lost lease: recovery requeues the row and the next attempt does the
+	// publish, exactly once.
+	stub := &igStub{
+		statusScript:    []string{"FINISHED"},
+		createDelayOnce: 700 * time.Millisecond,
+	}
+	srv := httptest.NewServer(stub.handler())
+	defer srv.Close()
+
+	e := newEnv(t,
+		[]app.Publisher{newInstagramPublisher(t, srv.URL, func(c *instagram.Config) {
+			c.Poll = graphapi.PollTiming{Start: time.Millisecond, Interval: time.Millisecond, Deadline: 500 * time.Millisecond}
+		})},
+		withLease(250*time.Millisecond))
+	id, _ := e.createWithMedia("lost lease", "instagram", "https://cdn.example.com/a.jpg", "image", 2*time.Second)
+	got := e.waitFor(id, statusIs("published"))
+
+	if stub.publishCalls != 1 {
+		t.Fatalf("publishes across attempts: want exactly 1, got %d", stub.publishCalls)
+	}
+	if got["external_post_id"] != igMediaID {
+		t.Fatalf("external_post_id: %v", got["external_post_id"])
 	}
 }
 

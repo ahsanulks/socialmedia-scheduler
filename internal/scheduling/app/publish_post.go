@@ -107,6 +107,19 @@ func (h *PublishPostHandler) Handle(ctx context.Context, id domain.PostID) error
 		}
 	}
 
+	// Defense against the lease-recovery race: a slow Prepare (Instagram's
+	// bounded container poll is the longest flow) can outlive the lease, and
+	// lease recovery would requeue the post while we are still mid-attempt.
+	// Never make the irreversible call without holding the lease: the
+	// RecoverExpiredLeases handler requeues the row and the next attempt runs
+	// a fresh publish, so a publish here could duplicate the post.
+	if ps, ok := post.State().(domain.PublishingState); ok && h.clock.Now().After(ps.LeaseUntil) {
+		h.log.Warn("lease expired before the irreversible call; leaving the row for lease recovery",
+			"id", post.ID().String(), "platform", post.Platform().String())
+		h.finish(ctx, attemptID, domain.OutcomeRetryable, "lease_lost", "lease expired before publish; not published")
+		return nil
+	}
+
 	externalID, err := publisher.Publish(ctx, pub, ref)
 	if err != nil {
 		return h.fail(ctx, post, attemptID, err)

@@ -128,16 +128,22 @@ func (p *Publisher) Prepare(ctx context.Context, pub app.Publication) (*domain.P
 		return nil, app.Permanent(err, "instagram: empty container id in response")
 	}
 
-	started := time.Now()
-	err = p.cfg.Poll.WithDefaults().Wait(ctx, started, func() (done bool, err error) {
-		status, err := p.containerStatus(ctx, igPath, container.String())
-		if err != nil {
+	// Retryable poll transport failures keep the wait going (the container is
+	// likely fine), but they are recorded so a deadline miss carries the last
+	// poll error into the requeue reason instead of waiting silently.
+	var lastPollErr error
+	err = p.cfg.Poll.Wait(ctx, "instagram", func() (done bool, err error) {
+		status, pollErr := p.containerStatus(ctx, igPath, container.String())
+		if pollErr != nil {
 			// Poll transport failures are retryable but the container is
 			// likely fine: treat like a missed poll tick (keep waiting).
-			if app.IsRetryable(err) {
+			if app.IsRetryable(pollErr) {
+				if lastPollErr == nil {
+					lastPollErr = pollErr
+				}
 				return false, nil
 			}
-			return false, err
+			return false, pollErr
 		}
 		switch status {
 		case statusFinished:
@@ -157,6 +163,11 @@ func (p *Publisher) Prepare(ctx context.Context, pub app.Publication) (*domain.P
 		}
 	})
 	if err != nil {
+		if app.IsRetryable(err) && lastPollErr != nil {
+			return nil, app.Retryable(err,
+				"instagram: container still processing; requeued (last status poll error: "+
+					app.FailureReasonOf(lastPollErr)+")")
+		}
 		return nil, err
 	}
 	return &container, nil

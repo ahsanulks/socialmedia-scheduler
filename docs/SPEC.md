@@ -337,8 +337,13 @@ platform — only the adapter differs.
    1. `StartPublishing` (attempt + 1).
    2. If the post has no `prepare_ref`: call `Prepare(content)` and persist the returned reference
       immediately.
-   3. Call `Publish(content, prepare_ref)` → external post id.
-   4. `MarkPublished` (status `published`, `published_at`, `external_post_id`).
+   3. **Lease re-check.** Before the irreversible call, the handler verifies the lease is still
+      valid. A slow `Prepare` (Instagram's bounded container poll is the longest flow) can
+      otherwise outlive the lease while recovery is mid-sweep; publishing on a lost lease
+      duplicates the post. On a lost lease the attempt is recorded as retryable `lease_lost`
+      and the row is left for lease recovery — nothing is sent to the platform.
+   4. Call `Publish(content, prepare_ref)` → external post id.
+   5. `MarkPublished` (status `published`, `published_at`, `external_post_id`).
 6. **On failure:**
    - Retryable (adapter says so): attempts < 5 → back to `scheduled`, `next_attempt_at` =
      now + 1m / 5m / 15m / 60m, `last_error` set. Otherwise `failed`.
@@ -494,9 +499,10 @@ POST https://graph.facebook.com/{ig-user-id}/media_publish
 - Account limit 100 API-published posts per rolling 24h, enforced on `media_publish`; the
   adapter caps itself at `DailyLimit` = 90 (safety margin).
 - The prepare phase waits for `FINISHED` with a bounded poll (~15s first poll, ~15s interval,
-  ≤90s total, inside the default 2-minute publish lease). Still `IN_PROGRESS` at the deadline
-  is retryable: the worker requeues with backoff, and an unpublished container is valid for
-  24h. Container `ERROR`/`EXPIRED` is permanent.
+  ≤90s total, inside the default 2-minute publish lease; the wait is context-bounded, so an
+  in-flight poll is aborted at the deadline rather than overshooting it). Still `IN_PROGRESS`
+  at the deadline is retryable: the worker requeues with backoff, and an unpublished container
+  is valid for 24h. Container `ERROR`/`EXPIRED` is permanent.
 - Requires a Facebook *user* access token with `instagram_basic` + `instagram_content_publish`
   (a Page token does not work), a professional account linked to a Page, and Page Publishing
   Authorization.
