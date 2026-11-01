@@ -58,6 +58,7 @@ rejected with `422`.
 | `INSTAGRAM_DAILY_LIMIT` | `90` | safety margin under the 100/24h publish quota |
 | `FAKE_PLATFORM_ENABLED` | `false` | register the in-memory adapter (local dev) |
 | `FAKE_PLATFORM_NAME` | `fake` | platform slug for the fake adapter |
+| `IDEMPOTENCY_RETENTION` | `720h` | prune `idempotency_keys` rows older than this hourly (0 disables) |
 
 Run it in Docker (multi-stage build, distroless runtime):
 

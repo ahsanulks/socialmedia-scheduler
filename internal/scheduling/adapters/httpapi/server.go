@@ -180,7 +180,6 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 	// Read the raw body first: the idempotency request hash is taken over
 	// exactly the bytes the client sent, before the decoder re-formats them.
 	idemKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
-	var bodyHash string
 	if idemKey != "" {
 		if s.deps.Idempotency == nil {
 			s.problem(w, r, http.StatusServiceUnavailable, "idempotency_not_configured",
@@ -195,31 +194,70 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBodyBytes))
 	if err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			s.problem(w, r, http.StatusRequestEntityTooLarge, "request_too_large",
+				"request body exceeds "+strconv.Itoa(maxBodyBytes)+" bytes")
+			return
+		}
 		s.problem(w, r, http.StatusBadRequest, "bad_request",
 			"body must be valid JSON under "+strconv.Itoa(maxBodyBytes)+" bytes")
 		return
 	}
+	var bodyHash string
 	if idemKey != "" {
-		sum := sha256.Sum256(raw)
+		// The hash folds in the route tag so a future route cannot reuse
+		// the same key namespace with a different operation.
+		sum := sha256.Sum256([]byte("POST /api/v1/schedules\n" + string(raw)))
 		bodyHash = hex.EncodeToString(sum[:])
-		rec, found, err := s.deps.Idempotency.Get(idemKey)
+	}
+
+	// Reserve the key before any side effect; a concurrent same-key request
+	// either replays the stored response, waits out an in-flight winner, or
+	// loses on the hash. Only the owner proceeds to create. Store calls run
+	// on a context detached from the client connection: a disconnect must
+	// never strand a reservation (the canonical idempotency case is a client
+	// that timed out on the create and retries with the same key).
+	storeCtx := context.WithoutCancel(r.Context())
+	ownedReservation := false
+	created := false
+	if idemKey != "" {
+		result, stored, err := s.deps.Idempotency.Reserve(storeCtx, idemKey, bodyHash)
 		if err != nil {
-			s.problem(w, r, http.StatusInternalServerError, "internal_error", "idempotency lookup failed")
+			s.problem(w, r, http.StatusInternalServerError, "internal_error", "idempotency reserve failed")
 			return
 		}
-		if found {
-			if rec.RequestHash != bodyHash {
-				s.problem(w, r, http.StatusUnprocessableEntity, "idempotency_key_mismatch",
-					"this Idempotency-Key was used with a different request body")
-				return
-			}
+		switch result {
+		case app.ReserveMismatch:
+			s.problem(w, r, http.StatusUnprocessableEntity, "idempotency_key_mismatch",
+				"this Idempotency-Key was used with a different request body")
+			return
+		case app.ReserveStored:
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("Idempotency-Replayed", "true")
-			w.WriteHeader(rec.StatusCode)
-			_, _ = w.Write([]byte(rec.Response))
+			if stored.Location != "" {
+				w.Header().Set("Location", stored.Location)
+			}
+			w.WriteHeader(stored.StatusCode)
+			_, _ = w.Write([]byte(stored.Response))
 			return
+		case app.ReserveInProgress:
+			s.problem(w, r, http.StatusConflict, "idempotency_in_progress",
+				"another request with this Idempotency-Key is still being processed; retry")
+			return
+		case app.ReserveOurs:
+			ownedReservation = true
 		}
 	}
+	// Any failure from here on releases our pending reservation, so the next
+	// retry gets a fresh claim instead of a stuck key.
+	defer func() {
+		if ownedReservation && !created {
+			if err := s.deps.Idempotency.Release(storeCtx, idemKey, bodyHash); err != nil {
+				s.log.Warn("releasing idempotency reservation failed", "key_id", idemKey, "error", err)
+			}
+		}
+	}()
 
 	r.Body = io.NopCloser(bytes.NewReader(raw))
 	var req createRequest
@@ -247,23 +285,25 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, err)
 		return
 	}
-	if idemKey != "" {
+	location := "/api/v1/schedules/" + res.ID
+	// The schedule exists from here on, so the pending reservation must
+	// survive even when the response itself cannot be stored: retries then
+	// see ReserveInProgress (loud, prunable) instead of double-creating a
+	// schedule for a key whose create already succeeded.
+	created = true
+	if ownedReservation {
 		resp, err := json.Marshal(createResponse{ID: res.ID, Version: res.Version})
 		if err == nil {
 			// Stored before the response is written so an interrupted
-			// response still replays. Failure to store is logged, never
-			// failed: the create itself succeeded.
-			if err := s.deps.Idempotency.Put(app.IdempotencyRecord{
-				Key:         idemKey,
-				RequestHash: bodyHash,
-				StatusCode:  http.StatusCreated,
-				Response:    string(resp),
-			}); err != nil {
-				s.log.Warn("storing idempotency key failed", "key_id", idemKey, "error", err)
+			// response or client timeout still replays. A failed store is
+			// logged, never failed, and leaves the key pending.
+			if err := s.deps.Idempotency.Complete(storeCtx, idemKey, bodyHash,
+				http.StatusCreated, location, string(resp)); err != nil {
+				s.log.Warn("storing idempotency response failed", "key_id", idemKey, "error", err)
 			}
 		}
 	}
-	w.Header().Set("Location", "/api/v1/schedules/"+res.ID)
+	w.Header().Set("Location", location)
 	writeJSON(w, http.StatusCreated, createResponse{ID: res.ID, Version: res.Version})
 }
 

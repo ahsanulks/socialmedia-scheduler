@@ -31,33 +31,35 @@ type Instagram struct {
 }
 
 type Config struct {
-	HTTPAddr        string
-	DatabasePath    string
-	APIToken        string
-	DefaultPlatform string
-	SchedulerTick   time.Duration
-	SchedulerBatch  int
-	Lease           time.Duration
-	MaxAttempts     int
-	LogLevel        string
-	Threads         Threads
-	Facebook        Facebook
-	Instagram       Instagram
-	FakeEnabled     bool
-	FakePlatform    string
+	HTTPAddr             string
+	DatabasePath         string
+	APIToken             string
+	DefaultPlatform      string
+	SchedulerTick        time.Duration
+	SchedulerBatch       int
+	Lease                time.Duration
+	MaxAttempts          int
+	LogLevel             string
+	IdempotencyRetention time.Duration
+	Threads              Threads
+	Facebook             Facebook
+	Instagram            Instagram
+	FakeEnabled          bool
+	FakePlatform         string
 }
 
 func Load() (Config, error) {
 	cfg := Config{
-		HTTPAddr:        env("HTTP_ADDR", ":8080"),
-		DatabasePath:    env("DATABASE_PATH", "./data/scheduler.db"),
-		APIToken:        os.Getenv("API_TOKEN"),
-		DefaultPlatform: env("DEFAULT_PLATFORM", "threads"),
-		SchedulerTick:   envDuration("SCHEDULER_TICK", 5*time.Second),
-		SchedulerBatch:  envInt("SCHEDULER_BATCH", 10),
-		Lease:           envDuration("PUBLISH_LEASE", 2*time.Minute),
-		MaxAttempts:     envInt("MAX_PUBLISH_ATTEMPTS", 5),
-		LogLevel:        env("LOG_LEVEL", "info"),
+		HTTPAddr:             env("HTTP_ADDR", ":8080"),
+		DatabasePath:         env("DATABASE_PATH", "./data/scheduler.db"),
+		APIToken:             os.Getenv("API_TOKEN"),
+		DefaultPlatform:      env("DEFAULT_PLATFORM", "threads"),
+		SchedulerTick:        envDuration("SCHEDULER_TICK", 5*time.Second),
+		SchedulerBatch:       envInt("SCHEDULER_BATCH", 10),
+		Lease:                envDuration("PUBLISH_LEASE", 2*time.Minute),
+		MaxAttempts:          envInt("MAX_PUBLISH_ATTEMPTS", 5),
+		LogLevel:             env("LOG_LEVEL", "info"),
+		IdempotencyRetention: envDuration("IDEMPOTENCY_RETENTION", 30*24*time.Hour),
 		Threads: Threads{
 			Enabled:     envBool("THREADS_ENABLED", false),
 			UserID:      os.Getenv("THREADS_USER_ID"),
@@ -89,6 +91,9 @@ func Load() (Config, error) {
 	}
 	if cfg.SchedulerBatch <= 0 {
 		return Config{}, fmt.Errorf("SCHEDULER_BATCH must be positive")
+	}
+	if cfg.IdempotencyRetention < 0 {
+		return Config{}, fmt.Errorf("IDEMPOTENCY_RETENTION must be non-negative (0 disables pruning)")
 	}
 	for name, limit := range map[string]int{
 		"THREADS_DAILY_LIMIT":   cfg.Threads.DailyLimit,

@@ -107,18 +107,36 @@ paths:
               $ref: "#/components/schemas/CreateScheduleRequest"
       responses:
         "201":
-          description: Schedule created
+          description: >
+            Schedule created (first response for the Idempotency-Key) or the
+            stored response of an earlier identical request, marked with the
+            Idempotency-Replayed: true header and the same Location header.
           headers:
             Location:
               description: URL of the created schedule
               schema:
                 type: string
+            Idempotency-Replayed:
+              description: true when this response replays an earlier create
+              schema:
+                type: string
+                const: "true"
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/CommandResult"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "409":
+          description: >
+            Another request with the same Idempotency-Key is still being
+            processed (code idempotency_in_progress). No schedule was
+            created; retry with the same key and body to receive the winner's
+            response once it completes.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
         "422":
           $ref: "#/components/responses/ValidationFailed"
     get:
@@ -263,10 +281,13 @@ components:
       in: header
       required: false
       description: >
-        Client-supplied key. Repeating the same key with the same body replays
-        the originally stored response (with an Idempotency-Replayed: true
-        header) instead of creating a second schedule. The same key with a
-        different body is rejected with 422 idempotency_key_mismatch.
+        Client-supplied key. The key is reserved atomically before the create:
+        the same key with byte-identical body replays the stored response
+        (Idempotency-Replayed: true, same Location), the same key with a
+        different body is rejected with 422 idempotency_key_mismatch, and a
+        concurrent in-flight request under the same key answers 409
+        idempotency_in_progress until it completes. A failed create releases
+        its reservation, so retrying is safe.
       schema:
         type: string
         maxLength: 255

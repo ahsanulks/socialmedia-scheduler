@@ -225,10 +225,13 @@ Content-Type: application/json
 - `scheduled_at` required, RFC 3339 **UTC with `Z`**, must be in the future.
 - `platform` optional; defaults to `threads`. Must be a registered platform, else
   `422 unsupported_platform`.
-- Optional `Idempotency-Key` request header (≤255 characters): the same key with byte-identical
-  body replays the stored `201` response (plus an `Idempotency-Replayed: true` header) instead
-  of creating a second schedule; the same key with a different body returns
-  `422 idempotency_key_mismatch`. Requests without the header are unaffected.
+- Optional `Idempotency-Key` request header (≤255 characters): the key is **reserved atomically
+  before the create**, so concurrent retries cannot create more than one schedule. The same key
+  with byte-identical body replays the stored `201` response (`Idempotency-Replayed: true`,
+  same `Location`) instead of creating a second schedule; a different body under the same key
+  returns `422 idempotency_key_mismatch`; a concurrent in-flight request under the same key
+  returns `409 idempotency_in_progress` until the winner completes. A failed create releases
+  its reservation, so retrying after an error is safe. Requests without the header are unaffected.
 - Response `201 { "id": "0192…", "version": 1 }`.
 
 ### 5.3 List
@@ -714,12 +717,22 @@ Still open: the manual reconciliation path for the residual at-least-once duplic
 
 Delivered since the M6 deferral note above:
 
-- **Idempotency keys** (`migrations/0003_idempotency_keys.sql`, `app.IdempotencyStore`,
-  SQLite store): `POST /schedules` replays the stored `201` response for the same
-  `Idempotency-Key` + body hash (`Idempotency-Replayed: true`); a reused key with a different
-  body returns `422 idempotency_key_mismatch`. First writer wins on racing duplicates. The
-  residual window (crash between create and store, or a client that never got its key row)
-  is the documented at-least-once gap; the duplicate then has no saved key.
+- **Idempotency keys** (`migrations/0003`+`0004`, `app.IdempotencyStore`, SQLite store):
+  `POST /schedules` **reserves the key before the create** (`INSERT … ON CONFLICT(key) DO
+  NOTHING`; exactly one concurrent request can win), so racing retries produce one schedule —
+  losers replay (replayed 201) or get `409 idempotency_in_progress`. A reused key with a
+  different body returns `422 idempotency_key_mismatch`. A failed create releases its
+  reservation (`Release`), so keys never wedge after validation/platform errors. Replayed
+  responses carry the original `Location`. Residual windows, both documented:
+  - a crashed process between a successful create and `Complete` leaves a
+    **pending** row → retries see 409 until the row is pruned; never a duplicate. The scheduler prunes rows
+    older than `IDEMPOTENCY_RETENTION` (default 30d) hourly via the worker.
+  - a pruned or never-sent key loses its saved response, so a retry could create twice.
+
+  Store calls run on a context detached from the client connection, so a
+  client disconnect mid-create cannot strand a reservation (the canonical
+  idempotency failure mode). The request hash folds in a route tag, so a
+  future route cannot collide in the same key namespace.
 - **Dockerfile** (multi-stage, CGO off, distroless static runtime + `.dockerignore`).
 - **Ops runbook** (`docs/RUNBOOK.md`): run/probe, migrations on startup, Docker rules
   (one process per database, persistent volume), backup via `VACUUM INTO` + cron, restore,

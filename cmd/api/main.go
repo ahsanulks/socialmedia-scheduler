@@ -89,15 +89,16 @@ func main() {
 	}
 
 	application, err := bootstrap.New(ctx, bootstrap.Config{
-		DatabasePath:    cfg.DatabasePath,
-		APIToken:        cfg.APIToken,
-		DefaultPlatform: cfg.DefaultPlatform,
-		Publishers:      publishers,
-		Tick:            cfg.SchedulerTick,
-		Batch:           cfg.SchedulerBatch,
-		Lease:           cfg.Lease,
-		MaxAttempts:     cfg.MaxAttempts,
-		Logger:          logger,
+		DatabasePath:         cfg.DatabasePath,
+		APIToken:             cfg.APIToken,
+		DefaultPlatform:      cfg.DefaultPlatform,
+		Publishers:           publishers,
+		Tick:                 cfg.SchedulerTick,
+		Batch:                cfg.SchedulerBatch,
+		Lease:                cfg.Lease,
+		MaxAttempts:          cfg.MaxAttempts,
+		IdempotencyRetention: cfg.IdempotencyRetention,
+		Logger:               logger,
 	})
 	if err != nil {
 		logger.Error("failed to start application", "error", err)

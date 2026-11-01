@@ -13,14 +13,17 @@ import (
 // Worker claims due schedules and publishes them. The flow is identical for
 // every platform; the adapter is resolved from the registry.
 type Worker struct {
-	posts    domain.ScheduledPostRepository
-	registry *app.Registry
-	recover  *app.RecoverExpiredLeasesHandler
-	publish  *app.PublishPostHandler
-	clock    app.Clock
-	batch    int
-	tick     time.Duration
-	log      *slog.Logger
+	posts     domain.ScheduledPostRepository
+	registry  *app.Registry
+	recover   *app.RecoverExpiredLeasesHandler
+	publish   *app.PublishPostHandler
+	clock     app.Clock
+	prune     app.IdempotencyPruner
+	retention time.Duration
+	batch     int
+	tick      time.Duration
+	log       *slog.Logger
+	lastPrune time.Time
 }
 
 func New(
@@ -29,6 +32,8 @@ func New(
 	recover *app.RecoverExpiredLeasesHandler,
 	publish *app.PublishPostHandler,
 	clock app.Clock,
+	prune app.IdempotencyPruner,
+	retention time.Duration,
 	tick time.Duration,
 	batch int,
 	log *slog.Logger,
@@ -43,14 +48,16 @@ func New(
 		log = slog.Default()
 	}
 	return &Worker{
-		posts:    posts,
-		registry: registry,
-		recover:  recover,
-		publish:  publish,
-		clock:    clock,
-		batch:    batch,
-		tick:     tick,
-		log:      log,
+		posts:     posts,
+		registry:  registry,
+		recover:   recover,
+		publish:   publish,
+		clock:     clock,
+		prune:     prune,
+		retention: retention,
+		batch:     batch,
+		tick:      tick,
+		log:       log,
 	}
 }
 
@@ -72,10 +79,20 @@ func (w *Worker) Run(ctx context.Context) {
 	}
 }
 
-// Tick runs one pass: recover expired leases, then publish what is due.
+// Tick runs one pass: recover expired leases, prune stale idempotency
+// rows at most hourly, then publish what is due.
 func (w *Worker) Tick(ctx context.Context) error {
 	if _, err := w.recover.Handle(ctx); err != nil {
 		w.log.Error("lease recovery failed", "error", err)
+	}
+	if w.prune != nil && w.retention > 0 && time.Since(w.lastPrune) >= time.Hour {
+		n, err := w.prune.Prune(ctx, w.clock.Now().Add(-w.retention))
+		if err != nil {
+			w.log.Error("idempotency prune failed", "error", err)
+		} else if n > 0 {
+			w.log.Info("pruned idempotency rows", "count", n, "retention", w.retention.String())
+		}
+		w.lastPrune = w.clock.Now()
 	}
 
 	ids, err := w.posts.FindDueIDs(ctx, w.clock.Now(), w.batch)

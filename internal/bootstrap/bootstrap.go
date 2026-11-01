@@ -21,15 +21,16 @@ import (
 )
 
 type Config struct {
-	DatabasePath    string
-	APIToken        string
-	DefaultPlatform string
-	Publishers      []app.Publisher
-	Tick            time.Duration
-	Batch           int
-	Lease           time.Duration
-	MaxAttempts     int
-	Logger          *slog.Logger
+	DatabasePath         string
+	APIToken             string
+	DefaultPlatform      string
+	Publishers           []app.Publisher
+	Tick                 time.Duration
+	Batch                int
+	Lease                time.Duration
+	MaxAttempts          int
+	IdempotencyRetention time.Duration
+	Logger               *slog.Logger
 }
 
 type App struct {
@@ -89,8 +90,9 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 	get := app.NewGetScheduleHandler(read)
 	list := app.NewListSchedulesHandler(read)
 
+	idempotency := sqlite.NewIdempotencyStore(db)
 	server := httpapi.New(httpapi.Deps{
-		Idempotency:     sqlite.NewIdempotencyStore(db),
+		Idempotency:     idempotency,
 		Create:          create,
 		Update:          update,
 		Cancel:          cancel,
@@ -106,7 +108,8 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 
 	publish := app.NewPublishPostHandler(repo, registry, clk, log, cfg.Lease, cfg.MaxAttempts)
 	recover := app.NewRecoverExpiredLeasesHandler(repo, clk, log, 100)
-	worker := scheduler.New(repo, registry, recover, publish, clk, cfg.Tick, cfg.Batch, log)
+	worker := scheduler.New(repo, registry, recover, publish, clk,
+		idempotency, cfg.IdempotencyRetention, cfg.Tick, cfg.Batch, log)
 
 	return &App{
 		Handler:  server.Handler(),

@@ -81,10 +81,17 @@ Note: `VACUUM INTO` copies are ordinary SQLite files; verify with
 - `schedules_read` — the read projection, rebuilt by the projector from
   events; never queried for writes.
 - `schedule_attempts` — per-attempt diagnostics (outcome, error, duration).
-- `idempotency_keys` — stored POST `/schedules` responses for serialization
-  via the `Idempotency-Key` header. Small; safe to prune (`DELETE FROM
-  idempotency_keys WHERE created_at < ?`) — a pruned key only means that
-  retry could create a schedule twice.
+- `idempotency_keys` — reservations and stored POST `/schedules` responses
+  behind the `Idempotency-Key` header. Rows with `response IS NULL` are
+  pending reservations: fresh ones belong to an in-flight request (retries
+  get 409), an old one is the wake of a crashed process (`pending` after
+  `create` failed) and can be deleted manually. The worker deletes rows —
+  pending and completed alike — older than `IDEMPOTENCY_RETENTION` (default
+  30d) once per hour, so keep retention far above the create duration;
+  pruning an in-flight reservation frees the key for re-claiming, which is
+    exactly the documented double-create cost — never a database problem. A
+    pruned key only means that retry could create the schedule twice.
+  twice.
 
 ## Common failures
 
